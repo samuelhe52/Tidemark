@@ -1,0 +1,24 @@
+# Xcode
+xcuserdata/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Editor and local tooling
+buildServer.json
+.vscode/
+.nvim/
+.DS_Store
+
+# Temporary files and worktrees
+tmp/
+.worktrees/
