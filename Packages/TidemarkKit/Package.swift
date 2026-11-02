@@ -1,6 +1,17 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 
 import PackageDescription
+
+/// Matches the app target's `SWIFT_APPROACHABLE_CONCURRENCY` and
+/// `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY`, so the same code behaves the same in both.
+let sharedSettings: [SwiftSetting] = [
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("MemberImportVisibility")
+]
+
+/// The engine and the skins drive UI, so they default to the main actor like the app.
+let mainActorSettings = sharedSettings + [.defaultIsolation(MainActor.self)]
 
 /// The three concerns of Tidemark, kept apart by the compiler.
 ///
@@ -18,8 +29,10 @@ let package = Package(
         .library(name: "TidemarkData", targets: ["TidemarkData"])
     ],
     targets: [
-        .target(name: "TidemarkEngine"),
-        .target(name: "TidemarkAppearance"),
-        .target(name: "TidemarkData")
-    ]
+        .target(name: "TidemarkEngine", swiftSettings: mainActorSettings),
+        .target(name: "TidemarkAppearance", swiftSettings: mainActorSettings),
+        // Data reads files and calls the network, so it stays nonisolated by default.
+        .target(name: "TidemarkData", swiftSettings: sharedSettings)
+    ],
+    swiftLanguageModes: [.v6]
 )
