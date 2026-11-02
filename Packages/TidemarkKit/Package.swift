@@ -32,7 +32,9 @@ let package = Package(
         .target(name: "TidemarkEngine", swiftSettings: mainActorSettings),
         .target(name: "TidemarkAppearance", swiftSettings: mainActorSettings),
         // Data reads files and calls the network, so it stays nonisolated by default.
-        .target(name: "TidemarkData", swiftSettings: sharedSettings)
+        .target(name: "TidemarkData", swiftSettings: sharedSettings),
+        .testTarget(name: "TidemarkEngineTests", dependencies: ["TidemarkEngine"], swiftSettings: mainActorSettings),
+        .testTarget(name: "TidemarkDataTests", dependencies: ["TidemarkData"], swiftSettings: sharedSettings)
     ],
     swiftLanguageModes: [.v6]
 )

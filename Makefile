@@ -33,6 +33,10 @@ launch: ## Relaunch the last built app, without building
 	pkill -f "$$app_path/Contents/MacOS/" && sleep 1; \
 	open -n "$$app_path"
 
+.PHONY: test
+test: ## Run the engine and data package tests
+	swift test --package-path $(KIT_PATH)
+
 # Maintenance
 .PHONY: clean
 clean: ## Clean the Xcode build products and local build artifacts

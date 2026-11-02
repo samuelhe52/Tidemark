@@ -49,3 +49,28 @@ runtime coverage beyond an ordinary single-display desktop check.
 ## Current state
 
 Planned. Implementation and validation results will be recorded here as they occur.
+
+## Engine and passive-data checkpoint — 2026-11-03
+
+Implemented pure timing and placement in
+`Packages/TidemarkKit/Sources/TidemarkEngine/CompanionState.swift` and
+`Packages/TidemarkKit/Sources/TidemarkEngine/DockPlacement.swift`. The host schedules
+a monotonic deadline; menus (including nesting), pinning and dragging cancel or
+suspend retraction. Display geometry subtracts shared seams and keeps corner
+clearance; disconnected displays resolve against the first supplied display.
+
+Implemented quota normalization, parsing and read-only bounded file access in
+`Packages/TidemarkKit/Sources/TidemarkData/QuotaObservation.swift`,
+`Packages/TidemarkKit/Sources/TidemarkData/PassiveQuotaParser.swift`, and
+`Packages/TidemarkKit/Sources/TidemarkData/PassiveQuotaReader.swift`.
+The reader selects one complete Claude capture rather than merging potentially
+different accounts, and scans only the newest Codex rollout's bounded tail.
+Duplicate Codex durations are collapsed; boolean percentages are rejected.
+Stale/expired/future-dated readings produce no remaining percentage.
+
+Validation: `make test` passed 11 Swift Testing tests (4 Engine, 7 Data). The first
+attempt failed to compile CGRect convenience properties with member-import
+visibility enabled; importing CoreGraphics explicitly fixed it. Subsequent tests
+passed. `make build` also passed with the initial app wiring. No network or
+credential access was introduced. Synthetic temporary files are used in tests;
+the bounded-tail test compares the external file before and after reading.
