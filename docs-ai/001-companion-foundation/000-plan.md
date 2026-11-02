@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | In progress — scaffold delivered; feature implementation not yet authorized |
+| Status | In progress — implementation authorized; first companion slice underway |
 | Anchor date | 2026-11-02 |
 | Origin | Maintainer's PRD, a design discussion with a Codex agent, and an HTML plan the maintainer answered (since folded into [design.md](design.md)). This record was written on 2026-11-02, after the design phase and the scaffold (`6988d2d`) but before any feature code. It consolidates those inputs; it did not precede the scaffold. |
 | Related | [Design contract](design.md), [PRD](PRD.md), [orb concepts](orb-concepts.html), [Codex review](historical/codex-review.md) |
@@ -105,3 +105,5 @@ The dashboard is shared and not skinnable.
 
 - Updated 2026-11-02: project scaffold — see [002-scaffold.md](002-scaffold.md)
 - Updated 2026-11-02: fold the HTML plan into design.md, aligned package concurrency settings and signing — see [003-single-source-design.md](003-single-source-design.md)
+
+- Updated 2026-11-03: implementation authorized; first native companion slice planned — see [004-first-companion.md](004-first-companion.md)
