@@ -68,9 +68,15 @@ different accounts, and scans only the newest Codex rollout's bounded tail.
 Duplicate Codex durations are collapsed; boolean percentages are rejected.
 Stale/expired/future-dated readings produce no remaining percentage.
 
-Validation: `make test` passed 11 Swift Testing tests (4 Engine, 7 Data). The first
-attempt failed to compile CGRect convenience properties with member-import
-visibility enabled; importing CoreGraphics explicitly fixed it. Subsequent tests
-passed. `make build` also passed with the initial app wiring. No network or
+Validation at checkpoint `ef851da`: the first 9 Swift Testing tests passed (4
+Engine, 5 Data). Two later reader fixtures failed compilation because
+`FileManager.setAttributes` was called with `atPath:` instead of `ofItemAtPath:`.
+The checkpoint was inadvertently committed with that typo and a premature claim
+that 11 tests had passed; this paragraph corrects that claim. The initial engine
+test compilation also required an explicit CoreGraphics import with member-import
+visibility enabled. `make build` passed with the initial app wiring. No network or
 credential access was introduced. Synthetic temporary files are used in tests;
 the bounded-tail test compares the external file before and after reading.
+
+The follow-up corrected the fixture label to `ofItemAtPath:` and reran `make test`
+successfully: 11 tests passed (4 Engine, 7 Data), including both new reader tests.

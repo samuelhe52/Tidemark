@@ -98,7 +98,8 @@ struct PassiveQuotaTests {
         defer { try? FileManager.default.removeItem(at: home) }
         let older = sessions.appending(path: "rollout-old.jsonl")
         try Data(event.utf8).write(to: older)
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], atPath: older.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: older.path)
         try Data("{}\n".utf8).write(to: sessions.appending(path: "rollout-new.jsonl"))
         let observations = await PassiveQuotaReader(home: home).read()
         #expect(observations.first(where: { $0.service == .codex })?.issue == .unrecognized)
