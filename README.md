@@ -13,9 +13,11 @@
 
 ---
 
-Tidemark rests as a thin glow at the edge of your screen. Hover over it and an animated orb emerges with a summary; linger or click and it opens a panel with the quota left and the reset time for Claude Code and Codex. It reads the local files those tools and CC Switch already write.
+Tidemark rests as a thin glow at the edge of your screen. Hover over it and an animated orb emerges with a summary; linger or click and it opens a panel with the quota left and the reset time for Claude Code and Codex. It reads quota observations those tools already write locally.
 
-Tidemark is in early development.
+Tidemark is in early development. The first implementation includes the native companion, saved edge placement, and passive quota reads from Claude Code's cache (or an existing statusline tap) and Codex session logs. Old observations show their age; stale or expired quotas show as unknown.
+
+Click the orb to pin or unpin the dashboard, and drag it to move. Use **Show Companion** or **Reset Position** in the Tidemark menu to recover it. The orb artwork is provisional. CC Switch history, live quota requests, account management, and custom skins are planned.
 
 ## Requirements
 
@@ -26,6 +28,7 @@ Tidemark is in early development.
 ```sh
 make build   # build the app
 make run     # build and relaunch
+make test    # run engine and data tests
 make help    # list all targets
 ```
 

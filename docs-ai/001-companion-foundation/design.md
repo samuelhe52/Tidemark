@@ -9,6 +9,12 @@ the `TidemarkEngine`, `TidemarkAppearance`, and `TidemarkData` targets in
 Facts about other tools refer to CC Switch 4.0.24 (commit `c0189078`), Claude Code,
 and Codex as inspected on 2026-11-02. Their formats can change without notice.
 
+Implementation checkpoint (2026-11-03): the first native companion and passive
+quota path are implemented; see [004](004-first-companion.md) for actual scope and
+validation. The rest of this document remains the full intended contract. Metal,
+manifest skins, managed accounts, live requests, history and durable snapshots are
+not part of that first slice.
+
 ## 1. Rest at the edge
 
 The companion rests at a screen edge as a thin glow: a 4 px pill, not the orb.
@@ -255,6 +261,8 @@ func freshness(of w: QuotaWindow, now: Date) -> Freshness {
 ```
 
 - After a reset passes, the window shows "refresh needed", never 100 % left.
+- Stale windows retain their source age but display remaining quota as unknown.
+  Future capture timestamps also yield unknown; missing percentages stay missing.
 - The countdown runs locally from `resetsAt`; it needs no new data.
 
 ### 3.6 History from CC Switch

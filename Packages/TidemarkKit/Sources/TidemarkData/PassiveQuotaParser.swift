@@ -8,7 +8,9 @@
 import CoreFoundation
 import Foundation
 
-/// Parses only quota fields. Unknown fields (including credentials and conversation text) are discarded.
+/// Parses only quota fields.
+///
+/// Unknown fields (including credentials and conversation text) are discarded.
 public enum PassiveQuotaParser {
     public static func claudeCache(_ data: Data) -> [QuotaWindow] {
         guard let root = object(data),
@@ -37,7 +39,10 @@ public enum PassiveQuotaParser {
         return ["primary", "secondary"].compactMap { name in
             guard let window = limits[name] as? [String: Any] else { return nil }
             let minutes = number(window["window_minutes"])
-            let duration = minutes.flatMap { $0 > 0 ? $0 * 60 : nil }
+            let duration = minutes.flatMap { value -> TimeInterval? in
+                let seconds = value * 60
+                return seconds > 0 && seconds.isFinite ? seconds : nil
+            }
             let id: String
             switch duration {
             case 18000: id = "five_hour"

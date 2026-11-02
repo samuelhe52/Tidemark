@@ -17,7 +17,9 @@ public enum CompanionEvent {
     case menuOpened, menuClosed, dragBegan, dragEnded, reset
 }
 
-/// A deterministic state machine. The host schedules `nextDeadline` on a monotonic clock.
+/// A deterministic state machine.
+///
+/// The host schedules `nextDeadline` on a monotonic clock.
 public struct CompanionState {
     public private(set) var phase: CompanionPhase = .hidden
     public private(set) var nextDeadline: TimeInterval?

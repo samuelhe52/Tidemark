@@ -41,7 +41,7 @@ public struct QuotaWindow: Identifiable, Equatable, Codable, Sendable {
 
     public func freshness(at now: Date) -> QuotaFreshness {
         let age = now.timeIntervalSince(observedAt)
-        guard age >= -5, usedPercent != nil else { return .unknown }
+        guard age >= 0, usedPercent != nil else { return .unknown }
         if let resetsAt, now >= resetsAt { return .expired }
         if age >= 1800 { return .stale }
         return age >= 120 ? .aging : .current

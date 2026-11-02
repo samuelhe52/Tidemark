@@ -35,6 +35,8 @@ struct PassiveQuotaTests {
         let boolean = event.replacingOccurrences(of: "\"used_percent\":64", with: "\"used_percent\":true")
         let invalid = try #require(PassiveQuotaParser.codexEvent(Data(boolean.utf8)).first)
         #expect(invalid.usedPercent == nil)
+        let hugeDuration = event.replacingOccurrences(of: "10080", with: "1e308")
+        #expect(PassiveQuotaParser.codexEvent(Data(hugeDuration.utf8)).first?.duration == nil)
         let hugeReset = event.replacingOccurrences(of: "1794000000", with: "1e308")
         #expect(PassiveQuotaParser.codexEvent(Data(hugeReset.utf8)).first?.resetsAt == nil)
     }
