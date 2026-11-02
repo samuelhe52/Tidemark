@@ -3,7 +3,7 @@
 ## Project Nature
 
 - Tidemark is a native macOS companion that docks at a screen edge, emerges on hover, and shows Claude Code and Codex quota and usage.
-- Design inputs live in `docs/`: the product requirements (`PRD.md`), the accepted plan (`plan.html`, `plan.packed.html`), and the design review (`codex-review.md`).
+- Design records live in `docs-ai/`. Start with [`docs-ai/README.md`](docs-ai/README.md); the design contract is [`docs-ai/001-companion-foundation/design.md`](docs-ai/001-companion-foundation/design.md), with its decisions in that entry's `000-plan.md`.
 
 ## Architecture
 
@@ -21,6 +21,7 @@
 - Run `make format` only when the user asks; it rewrites the whole repository. Format only the files you touched with `swift format -i <paths>`.
 - The Xcode project uses synchronized folders: new files under `Sources/` and `Resources/` join the app target automatically. New package files only need to sit under the right `Packages/TidemarkKit/Sources/<Target>/` folder.
 - If the user asks to perform a change in a new worktree, create that worktree under `.worktrees/` in the repository root.
+- Use the `write-ai-doc` skill for substantial features and decision-shaping fixes, as defined in [`docs-ai/workflow.md`](docs-ai/workflow.md).
 
 ## Code Style
 
