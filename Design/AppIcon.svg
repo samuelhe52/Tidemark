@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Tidemark app icon.
+    A glass orb (the companion) holds two tides at different levels:
+    Claude and Codex quota. The pale line is the tide mark, the last
+    high water, left as a residue on the inside of the glass.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#241a5e"/>
+      <stop offset="1" stop-color="#0a1430"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="512" cy="512" r="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0.7" stop-color="#6fd3ff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#6fd3ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sky" cx="0.4" cy="0.25" r="0.85">
+      <stop offset="0" stop-color="#4a3fa8"/>
+      <stop offset="0.65" stop-color="#231a66"/>
+      <stop offset="1" stop-color="#120c3a"/>
+    </radialGradient>
+    <linearGradient id="backWave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a8f8de"/>
+      <stop offset="0.4" stop-color="#5fd0e8"/>
+      <stop offset="1" stop-color="#2b6fd6"/>
+    </linearGradient>
+    <linearGradient id="frontWave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7b93ff"/>
+      <stop offset="0.45" stop-color="#3b3fc4"/>
+      <stop offset="1" stop-color="#1a1460"/>
+    </linearGradient>
+    <clipPath id="orbClip">
+      <circle cx="512" cy="512" r="290"/>
+    </clipPath>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="0.5" stop-color="#cfe8ff" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#7ef0e0" stop-opacity="0.7"/>
+    </linearGradient>
+    <radialGradient id="specular" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="innerShade" cx="512" cy="512" r="290" gradientUnits="userSpaceOnUse">
+      <stop offset="0.8" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#05031a" stop-opacity="0.5"/>
+    </radialGradient>
+    <!-- Strong where it meets the glass, fading toward the middle: a stain on the wall, not a horizon. -->
+    <linearGradient id="mark" x1="222" y1="0" x2="802" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff1d6" stop-opacity="1"/>
+      <stop offset="0.2" stop-color="#fff1d6" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#fff1d6" stop-opacity="0.12"/>
+      <stop offset="0.8" stop-color="#fff1d6" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#fff1d6" stop-opacity="1"/>
+    </linearGradient>
+    <filter id="tileShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="100" y="100" width="824" height="824">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <clipPath id="tileClip">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <rect x="100" y="114" width="824" height="824" rx="185" fill="#000000" fill-opacity="0.35" filter="url(#tileShadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+
+  <g clip-path="url(#tileClip)">
+    <circle cx="512" cy="512" r="380" fill="url(#halo)"/>
+    <!-- Dark collar separates the orb from the tile at small sizes -->
+    <circle cx="512" cy="512" r="298" fill="#070418" fill-opacity="0.55"/>
+
+    <g clip-path="url(#orbClip)">
+      <rect x="200" y="200" width="624" height="624" fill="url(#sky)"/>
+      <g fill="#fff6e8">
+        <circle cx="440" cy="300" r="3" opacity="0.8"/>
+        <circle cx="620" cy="290" r="2.4" opacity="0.6"/>
+        <circle cx="680" cy="370" r="3.2" opacity="0.7"/>
+        <circle cx="560" cy="350" r="2" opacity="0.5"/>
+      </g>
+
+      <!-- Tide mark: last high water -->
+      <line x1="222" y1="430" x2="802" y2="430" stroke="url(#mark)" stroke-width="10" stroke-opacity="0.45" filter="url(#glow)"/>
+      <line x1="222" y1="430" x2="802" y2="430" stroke="url(#mark)" stroke-width="4"/>
+
+      <!-- Back tide (higher) and front tide (lower): two quotas at different levels -->
+      <path d="M150 492 q50 -36 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 V840 H150 Z" fill="url(#backWave)"/>
+      <path d="M140 600 q50 40 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 V840 H140 Z" fill="url(#frontWave)"/>
+      <path d="M140 600 q50 40 100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0 t100 0" fill="none" stroke="#dbe9ff" stroke-opacity="0.6" stroke-width="5"/>
+
+      <g stroke="#fff6e8" stroke-linecap="round">
+        <path d="M456 662 H496 M512 662 H568" stroke-width="7" stroke-opacity="0.7"/>
+        <path d="M474 690 H504 M520 690 H552" stroke-width="5.5" stroke-opacity="0.45"/>
+        <path d="M492 716 H532" stroke-width="4" stroke-opacity="0.25"/>
+      </g>
+      <circle cx="512" cy="512" r="290" fill="url(#innerShade)"/>
+    </g>
+
+    <!-- Glass -->
+    <ellipse cx="410" cy="340" rx="136" ry="68" transform="rotate(-32 410 340)" fill="url(#specular)"/>
+    <path d="M312 722 A290 290 0 0 0 712 722" fill="none" stroke="#7ef0e0" stroke-opacity="0.45" stroke-width="10" stroke-linecap="round" filter="url(#glow)"/>
+    <circle cx="512" cy="512" r="290" fill="none" stroke="url(#rim)" stroke-width="4"/>
+  </g>
+</svg>
