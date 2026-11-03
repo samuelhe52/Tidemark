@@ -106,11 +106,11 @@ final class DashboardView: NSView {
 
     func prepareContentTransition() -> ContentTransition? {
         guard window != nil, !isHidden else { return nil }
-        let viewport = screenFrame(scrollView.contentView)
-        let frames = rows.mapValues { screenFrame($0.view) }
+        let viewport = scrollView.contentView.screenFrame()
+        let frames = rows.mapValues { $0.view.screenFrame() }
         return ContentTransition(
-            rows: rows, frames: frames, surface: screenFrame(surface), viewport: viewport,
-            chrome: root.arrangedSubviews.filter { $0 !== scrollView }.map { ($0, screenFrame($0)) })
+            rows: rows, frames: frames, surface: surface.screenFrame(), viewport: viewport,
+            chrome: root.arrangedSubviews.filter { $0 !== scrollView }.map { ($0, $0.screenFrame()) })
     }
 
     func cancelContentTransition() {
@@ -120,8 +120,8 @@ final class DashboardView: NSView {
         outgoingViews = []
         let views: [NSView] = [surface] + rows.values.map(\.view) + root.arrangedSubviews
         for view in views {
-            view.layer?.removeAnimation(forKey: "content.transform")
-            view.layer?.removeAnimation(forKey: "content.opacity")
+            view.layer?.removeAnimation(forKey: ContentMotion.transformKey)
+            view.layer?.removeAnimation(forKey: ContentMotion.opacityKey)
         }
     }
 
@@ -133,10 +133,8 @@ final class DashboardView: NSView {
         contentGeneration += 1
         let generation = contentGeneration
         contentTransitionIsActive = true
-        let reduced =
-            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            || ProcessInfo.processInfo.isLowPowerModeEnabled
-        let duration: CFTimeInterval = reduced ? 0.12 : 0.24
+        let reduced = ContentMotion.reducesMotion
+        let duration = ContentMotion.duration(reduced: reduced)
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -147,27 +145,27 @@ final class DashboardView: NSView {
             self.outgoingViews = []
             completion()
         }
-        if !reduced { move(surface, from: previous.surface, duration: duration, scales: true) }
-        for (view, frame) in previous.chrome where !reduced { move(view, from: frame, duration: duration) }
+        if !reduced { surface.animateMove(from: previous.surface, duration: duration, scales: true) }
+        for (view, frame) in previous.chrome where !reduced { view.animateMove(from: frame, duration: duration) }
         // The viewport travels top edge to top edge with the chrome, so rows start inside its clip
         // instead of above it when the panel shrinks; rows only make up the remaining distance.
-        let viewport = screenFrame(scrollView.contentView, model: true)
+        let viewport = scrollView.contentView.screenFrame(model: true)
         let shift = CGPoint(x: viewport.minX - previous.viewport.minX, y: viewport.maxY - previous.viewport.maxY)
         if !reduced {
-            move(
-                scrollView, from: screenFrame(scrollView, model: true).offsetBy(dx: -shift.x, dy: -shift.y),
+            scrollView.animateMove(
+                from: scrollView.screenFrame(model: true).offsetBy(dx: -shift.x, dy: -shift.y),
                 duration: duration)
         }
         for (id, row) in rows {
             if let frame = previous.frames[id], !reduced {
-                move(row.view, from: frame.offsetBy(dx: shift.x, dy: shift.y), duration: duration)
+                row.view.animateMove(from: frame.offsetBy(dx: shift.x, dy: shift.y), duration: duration)
             }
             let changed = previous.rows[id].map { $0.motionState != row.motionState } ?? true
             if changed, let rowLayer = row.view.layer {
-                fade(rowLayer, appearing: true, duration: duration)
+                rowLayer.addContentFade(appearing: true, duration: duration)
                 if !reduced, previous.frames[id] == nil {
                     let dy: CGFloat = row.view.superview?.isFlipped == true ? 6 : -6
-                    slide(rowLayer, from: CGPoint(x: 0, y: dy), to: .zero, duration: duration)
+                    rowLayer.addContentSlide(from: CGPoint(x: 0, y: dy), to: .zero, duration: duration)
                 }
             }
         }
@@ -179,7 +177,7 @@ final class DashboardView: NSView {
             // A replaced row travels with its successor so the two never separate into a ghost; a
             // removed row lifts away.
             let offset =
-                rows[id].map { offset(from: frame, to: screenFrame($0.view, model: true)) }
+                rows[id].map { offset(from: frame, to: $0.view.screenFrame(model: true)) }
                 ?? CGPoint(x: 0, y: isFlipped ? -6 : 6)
             // Retain the actual outgoing row. Native controls can overhang their alignment
             // rect, so clip the visible intersection instead of skipping the exit entirely.
@@ -197,75 +195,19 @@ final class DashboardView: NSView {
             outgoingViews.append(overlay)
             guard let outgoing = overlay.layer else { continue }
             outgoing.opacity = 0
-            fade(outgoing, appearing: false, duration: duration)
+            outgoing.addContentFade(appearing: false, duration: duration)
             if !reduced {
                 outgoing.transform = CATransform3DMakeTranslation(offset.x, offset.y, 0)
-                slide(outgoing, from: .zero, to: offset, duration: duration)
+                outgoing.addContentSlide(from: .zero, to: offset, duration: duration)
             }
         }
         CATransaction.commit()
-    }
-
-    private func screenFrame(_ view: NSView, model: Bool = false) -> CGRect {
-        guard let window, let parent = view.superview else { return .zero }
-        let rect = model ? view.frame : view.layer?.presentation()?.frame ?? view.frame
-        return window.convertToScreen(parent.convert(rect, to: nil))
     }
 
     /// How far this view's coordinates carry content from one screen rect's top-leading corner to another's.
     private func offset(from old: CGRect, to new: CGRect) -> CGPoint {
         // Screen coordinates rise upward; flipped views measure downward.
         CGPoint(x: new.minX - old.minX, y: isFlipped ? old.maxY - new.maxY : new.maxY - old.maxY)
-    }
-
-    /// Animates `view` from its old screen rect to its current frame.
-    ///
-    /// Rows only translate, top edge to top edge, so their text never stretches; the glass surface also scales.
-    private func move(_ view: NSView, from previous: CGRect, duration: CFTimeInterval, scales: Bool = false) {
-        guard let window, let parent = view.superview, let layer = view.layer else { return }
-        let target = view.frame
-        let old = parent.convert(window.convertFromScreen(previous), from: nil)
-        guard target.width > 0, target.height > 0, old != target else { return }
-        let transform: CATransform3D
-        if scales {
-            let anchor = layer.anchorPoint
-            let dx = old.minX + old.width * anchor.x - target.minX - target.width * anchor.x
-            let dy = old.minY + old.height * anchor.y - target.minY - target.height * anchor.y
-            transform = CATransform3DScale(
-                CATransform3DMakeTranslation(dx, dy, 0), old.width / target.width, old.height / target.height, 1)
-        } else {
-            let dy = parent.isFlipped ? old.minY - target.minY : old.maxY - target.maxY
-            guard old.minX != target.minX || dy != 0 else { return }
-            transform = CATransform3DMakeTranslation(old.minX - target.minX, dy, 0)
-        }
-        let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = NSValue(caTransform3D: transform)
-        animation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer.add(animation, forKey: "content.transform")
-    }
-
-    /// Staggered so outgoing and incoming text are barely visible together; a plain crossfade shows
-    /// both at half strength halfway through.
-    private func fade(_ layer: CALayer, appearing: Bool, duration: CFTimeInterval) {
-        let animation = CAKeyframeAnimation(keyPath: "opacity")
-        animation.values = appearing ? [0, 0, 1] : [1, 0, 0]
-        animation.keyTimes = appearing ? [0, 0.4, 1] : [0, 0.6, 1]
-        animation.duration = duration
-        animation.timingFunctions = [
-            CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .easeInEaseOut)
-        ]
-        layer.add(animation, forKey: "content.opacity")
-    }
-
-    private func slide(_ layer: CALayer, from: CGPoint, to: CGPoint, duration: CFTimeInterval) {
-        let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(from.x, from.y, 0))
-        animation.toValue = NSValue(caTransform3D: CATransform3DMakeTranslation(to.x, to.y, 0))
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer.add(animation, forKey: "content.transform")
     }
 
     @available(*, unavailable)

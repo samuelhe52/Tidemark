@@ -336,14 +336,14 @@ final class CompanionController: NSObject {
     }
 
     private func renderUsage(animated: Bool = false) {
-        let canAnimate = !panelShowsStrip && (state.phase == .expanded || state.phase == .pinned)
-        let transition =
-            canAnimate && (animated || stage.dashboard.contentTransitionIsActive)
-            ? stage.dashboard.prepareContentTransition() : nil
-        layoutGeneration += 1
-        stage.dashboard.cancelContentTransition()
         let now = Date()
-        stage.summary.update(text: QuotaText.summary(usage, preferences: settings.display, now: now))
+        let summaryText = QuotaText.summary(usage, preferences: settings.display, now: now)
+        let transition =
+            !panelShowsStrip && (animated || stage.contentTransitionIsActive)
+            ? stage.prepareContentTransition(for: state.phase, summaryText: summaryText) : nil
+        layoutGeneration += 1
+        stage.cancelContentTransition()
+        stage.summary.update(text: summaryText)
         stage.dashboard.update(
             usage, history: history, refreshing: refreshTask != nil, refreshedAt: refreshedAt,
             now: now)
@@ -369,7 +369,7 @@ final class CompanionController: NSObject {
             anchor = nearest
         }
         dragPoint = nil
-        applyLayout()                  // snaps panel and orb frame to docked position silently
+        applyLayout()  // snaps panel and orb frame to docked position silently
         if let origin = snapOrigin, let target = layout?.orb {
             stage.settleOrb(from: origin, to: target) {}
         }
@@ -421,11 +421,11 @@ final class CompanionController: NSObject {
         if !sleeping, !locked { panel.orderFrontRegardless() }
     }
 
-    private func applyLayout(transition: DashboardView.ContentTransition? = nil) {
+    private func applyLayout(transition: CompanionStageView.ContentTransition? = nil) {
         guard let anchor else { return }
         layoutGeneration += 1
         let generation = layoutGeneration
-        stage.dashboard.cancelContentTransition()
+        stage.cancelContentTransition()
         let newLayout = CompanionLayout(
             anchor: anchor, dragPoint: dragPoint, summarySize: stage.summary.preferredSize,
             dashboardSize: stage.dashboard.preferredSize(maxHeight: CompanionLayout.dashboardMaxHeight(for: anchor)))
@@ -437,7 +437,7 @@ final class CompanionController: NSObject {
         if panel.frame != container { panel.setFrame(container, display: true) }
         stage.place(newLayout, in: container)
         if let transition, !panelShowsStrip {
-            stage.dashboard.animateContent(from: transition) { [weak self] in
+            stage.animateContent(from: transition) { [weak self] in
                 guard let self, self.layoutGeneration == generation else { return }
                 self.applyLayout()
             }

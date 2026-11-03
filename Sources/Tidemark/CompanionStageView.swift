@@ -58,12 +58,41 @@ final class CompanionStageView: NSView {
         CATransaction.commit()
     }
 
+    // MARK: - Content transitions
+
+    /// What the summary or dashboard showed before new content, so it can animate to the new layout.
+    struct ContentTransition {
+        fileprivate var dashboard: DashboardView.ContentTransition?
+        fileprivate var summary: SummaryView.ContentTransition?
+    }
+
+    var contentTransitionIsActive: Bool { dashboard.contentTransitionIsActive || summary.contentTransitionIsActive }
+
+    /// Captures whichever element `phase` shows; nil when nothing visible would change.
+    func prepareContentTransition(for phase: CompanionPhase, summaryText: String) -> ContentTransition? {
+        let transition = ContentTransition(
+            dashboard: phase == .expanded || phase == .pinned ? dashboard.prepareContentTransition() : nil,
+            summary: phase == .revealed ? summary.prepareContentTransition(to: summaryText) : nil)
+        return transition.dashboard == nil && transition.summary == nil ? nil : transition
+    }
+
+    func cancelContentTransition() {
+        dashboard.cancelContentTransition()
+        summary.cancelContentTransition()
+    }
+
+    /// Runs after `place`. `completion` runs only if the transition finishes uncancelled.
+    func animateContent(from previous: ContentTransition, completion: @escaping () -> Void) {
+        if let previous = previous.dashboard { dashboard.animateContent(from: previous, completion: completion) }
+        if let previous = previous.summary { summary.animateContent(from: previous, completion: completion) }
+    }
+
     /// Moves every element to its pose for `phase`. `completion` runs once all motion settles.
     func show(
         _ phase: CompanionPhase, layout: CompanionLayout, animated: Bool, completion: (() -> Void)? = nil
     ) {
-        dashboard.cancelContentTransition()
-        let reduced = Self.reducesMotion
+        cancelContentTransition()
+        let reduced = ContentMotion.reducesMotion
         let orb = orbHandle.orb
         let wasDocked = orb.docked
         let docked = phase == .hidden
@@ -126,7 +155,7 @@ final class CompanionStageView: NSView {
     /// `completion` also runs when the settle is cancelled; read `orbSettling` to tell them apart.
     func settleOrb(from origin: CGRect, to target: CGRect, completion: @escaping () -> Void) {
         let offset = CGSize(width: origin.minX - target.minX, height: origin.minY - target.minY)
-        guard let layer = orbHandle.layer, offset != .zero, !Self.reducesMotion else { return completion() }
+        guard let layer = orbHandle.layer, offset != .zero, !ContentMotion.reducesMotion else { return completion() }
         let curve = MotionCurve.settle
         let spring = CASpringAnimation(perceptualDuration: curve.response, bounce: curve.bounce)
         spring.keyPath = "transform.translation"
@@ -143,10 +172,6 @@ final class CompanionStageView: NSView {
     func cancelOrbSettle() { orbHandle.layer?.removeAnimation(forKey: Self.settleKey) }
 
     private static let settleKey = "orb.settle"
-
-    private static var reducesMotion: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled
-    }
 
     // MARK: - Poses
 
@@ -216,15 +241,75 @@ final class CompanionStageView: NSView {
 /// The one-line summary shown beside the revealed orb.
 final class SummaryView: NSView {
     private let surface = GlassSurfaceView(cornerRadius: 14, kind: .content)
-    private let text = CompanionLabel(labelWithString: "")
+    private let text = SummaryView.label("")
+    private var outgoingText: CompanionLabel?
+    private var contentGeneration = 0
+    private(set) var contentTransitionIsActive = false
+
+    struct ContentTransition {
+        fileprivate let frame: CGRect
+        fileprivate let text: String
+    }
+
+    private static func label(_ value: String) -> CompanionLabel {
+        let label = CompanionLabel(labelWithString: value)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .labelColor
+        label.alignment = .center
+        label.wantsLayer = true
+        return label
+    }
+
+    func prepareContentTransition(to value: String) -> ContentTransition? {
+        guard window != nil, !isHidden, value != text.stringValue || contentTransitionIsActive else { return nil }
+        return ContentTransition(frame: surface.screenFrame(), text: text.stringValue)
+    }
+
+    func cancelContentTransition() {
+        contentGeneration += 1
+        contentTransitionIsActive = false
+        outgoingText?.removeFromSuperview()
+        outgoingText = nil
+        surface.layer?.removeAnimation(forKey: ContentMotion.transformKey)
+        text.layer?.removeAnimation(forKey: ContentMotion.opacityKey)
+    }
+
+    /// Resizes the glass while crossfading labels at their natural size, so neither text stretches.
+    func animateContent(from previous: ContentTransition, completion: @escaping () -> Void) {
+        guard let window else { return completion() }
+        contentGeneration += 1
+        let generation = contentGeneration
+        contentTransitionIsActive = true
+        let reduced = ContentMotion.reducesMotion
+        let duration = ContentMotion.duration(reduced: reduced)
+        let old = convert(window.convertFromScreen(previous.frame), from: nil)
+        let outgoing = Self.label(previous.text)
+        outgoing.setAccessibilityElement(false)
+        let height = outgoing.intrinsicContentSize.height
+        outgoing.frame = CGRect(x: old.minX, y: old.midY - height / 2, width: old.width, height: height)
+        addSubview(outgoing)
+        outgoingText = outgoing
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.contentGeneration == generation else { return }
+            self.cancelContentTransition()
+            completion()
+        }
+        if !reduced { surface.animateMove(from: previous.frame, duration: duration, scales: true) }
+        text.layer?.addContentFade(appearing: true, duration: duration)
+        outgoing.layer?.opacity = 0
+        outgoing.layer?.addContentFade(appearing: false, duration: duration)
+        CATransaction.commit()
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        text.font = .systemFont(ofSize: 12, weight: .medium)
-        text.textColor = .labelColor
-        text.alignment = .center
-        surface.contentView.addSubview(text)
+        wantsLayer = true
+        surface.wantsLayer = true
+        // A sibling of the glass, not its child, so the resize never scales the text.
         addSubview(surface)
+        addSubview(text)
     }
 
     @available(*, unavailable)
