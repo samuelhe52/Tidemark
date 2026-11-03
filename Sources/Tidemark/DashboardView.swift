@@ -118,7 +118,7 @@ final class DashboardView: NSView {
         contentTransitionIsActive = false
         for view in outgoingViews { view.removeFromSuperview() }
         outgoingViews = []
-        let views: [NSView] = [surface] + rows.values.map(\.view) + root.arrangedSubviews.filter { $0 !== scrollView }
+        let views: [NSView] = [surface] + rows.values.map(\.view) + root.arrangedSubviews
         for view in views {
             view.layer?.removeAnimation(forKey: "content.transform")
             view.layer?.removeAnimation(forKey: "content.opacity")
@@ -149,8 +149,19 @@ final class DashboardView: NSView {
         }
         if !reduced { move(surface, from: previous.surface, duration: duration, scales: true) }
         for (view, frame) in previous.chrome where !reduced { move(view, from: frame, duration: duration) }
+        // The viewport travels top edge to top edge with the chrome, so rows start inside its clip
+        // instead of above it when the panel shrinks; rows only make up the remaining distance.
+        let viewport = screenFrame(scrollView.contentView, model: true)
+        let shift = CGPoint(x: viewport.minX - previous.viewport.minX, y: viewport.maxY - previous.viewport.maxY)
+        if !reduced {
+            move(
+                scrollView, from: screenFrame(scrollView, model: true).offsetBy(dx: -shift.x, dy: -shift.y),
+                duration: duration)
+        }
         for (id, row) in rows {
-            if let frame = previous.frames[id], !reduced { move(row.view, from: frame, duration: duration) }
+            if let frame = previous.frames[id], !reduced {
+                move(row.view, from: frame.offsetBy(dx: shift.x, dy: shift.y), duration: duration)
+            }
             let changed = previous.rows[id].map { $0.motionState != row.motionState } ?? true
             if changed, let rowLayer = row.view.layer {
                 fade(rowLayer, appearing: true, duration: duration)
