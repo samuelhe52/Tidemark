@@ -45,6 +45,7 @@ dmg: ## Build a signed, notarized DMG with the Xcode account (VERSION=x.y.z opti
 .PHONY: release
 release: ## Build the DMG and publish it as GitHub release vVERSION (VERSION=x.y.z required)
 	@[ -n "$(VERSION)" ] || { echo "Usage: make release VERSION=x.y.z"; exit 1; }
+	@[ -n "$$NOTARY_PROFILE" ] || { echo "Set NOTARY_PROFILE to a notarytool keychain profile so the DMG is notarized."; exit 1; }
 	@VERSION=$(VERSION) scripts/build-dmg.sh
 	gh release create "v$(VERSION)" build/release/Tidemark-$(VERSION).dmg build/release/Tidemark-$(VERSION).dmg.sha256 \
 		--title "Tidemark $(VERSION)" --generate-notes
