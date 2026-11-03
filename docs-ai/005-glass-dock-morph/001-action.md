@@ -16,8 +16,9 @@ morphs it into the 44 pt sphere; retract melts it back. `EdgeGlowView` is gone.
 Key files:
 
 - `Packages/TidemarkKit/Sources/TidemarkAppearance/OrbView.swift` — `OrbView`
-  gains `docked`, `dockedFrame`, `setDocked(_:curve:delay:completion:)`,
-  `AccentFillView`; idle breathing uses `bounds` center instead of body center.
+  gains `docked`, `dockedFrame`, and `setDocked(_:curve:delay:completion:)`
+  (the initial `AccentFillView` was removed; see the plan's amendments); idle
+  breathing uses `bounds` center instead of body center.
 - `Packages/TidemarkKit/Sources/TidemarkAppearance/GlassSurfaceView.swift` —
   fallback (`NSVisualEffectView`) mask now clamps to min half-dimension, matching
   the glass capsule clamp; mask only rebuilds when the radius changes.

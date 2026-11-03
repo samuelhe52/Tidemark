@@ -15,12 +15,16 @@ quota path are implemented; see [004](004-first-companion.md). Entry
 AppKit views animated by Core Animation, added live requests, CC Switch's managed
 Codex accounts and the last-good store. Entry [004](../004-usage-history/000-plan.md)
 added CC Switch history (§3.6) with the compact range picker (§3.7); provider and
-model filters are not implemented yet. Entry [006](../006-settings/000-plan.md) adds the settings window and configurable interaction and quota presentation; its runtime and visual checks are deferred by the maintainer. Metal and manifest skins are not implemented yet.
+model filters are not implemented yet. Entry [005](../005-glass-dock-morph/000-plan.md)
+replaced the edge glow with a docked glass tab that morphs into the orb. Entry
+[006](../006-settings/000-plan.md) adds the settings window and configurable
+interaction and quota presentation. Metal and manifest skins are not implemented yet.
 
 ## 1. Rest at the edge
 
-The companion rests at a screen edge as a thin glow: a 4 px pill, not the orb.
-An 8 px hover strip around it is the only area that takes the pointer.
+The companion rests at a screen edge as a docked glass tab: a 16 × 48 pt Liquid
+Glass capsule centered on the edge, so 8 pt shows. A 10 × 64 pt hover strip over it
+is the only area that takes the pointer.
 
 ### 1.1 One panel, never focused
 
@@ -81,7 +85,7 @@ func pointerMoved(to p: CGPoint) {
 ```
 
 - Sources: global and local `.mouseMoved` monitors. While revealed, a 250 ms timer
-  reconciles a still pointer. While hidden, only the 8 px strip listens.
+  reconciles a still pointer. While hidden, only the hover strip listens.
 - Global monitors are asynchronous; test a fast cross-and-click.
 
 ## 2. Hover lifecycle
@@ -96,7 +100,7 @@ func pointerMoved(to p: CGPoint) {
 | expanded | click | pinned |
 | pinned | click on the orb, Esc | expanded |
 
-- **hidden:** the glow only; nothing renders.
+- **hidden:** the docked glass tab only.
 - **revealed:** the orb with a one-line summary, such as `Claude 5h 38% · Codex 7d 64%`.
 - **expanded:** the full panel; it goes back when the pointer leaves.
 - **pinned:** the full panel stays.
@@ -134,7 +138,7 @@ enum Timing {
 }
 ```
 
-- These remain the defaults. Settings allows expansion and retraction delays from 0 to 3 seconds in 0.1-second steps. Click-only activation keeps the edge glow until clicked and skips hover reveal/expansion. Changing behavior reschedules pending deadlines; reset-position and sleep/wake preserve the saved behavior. Runtime timing validation for these settings is pending.
+- These are the defaults. Settings allows expansion and retraction delays from 0 to 3 seconds in 0.1-second steps. Click-only activation keeps the docked glass tab until clicked and skips hover reveal/expansion. Changing behavior reschedules pending deadlines; reset-position and sleep/wake preserve the saved behavior.
 - The dwell timer stops if the pointer leaves or a drag starts.
 - The leave grace starts only outside the union of the orb, the panel, and the
   travel corridor between them.
@@ -144,7 +148,9 @@ enum Timing {
 ### 2.3 Motion and render budget
 
 Every transition animates only layer `transform` and `opacity`, so the render server
-composites it. Springs start from the on-screen (presentation) value, so a reversal
+composites it. The one exception is the orb's glass body, whose frame springs between
+the docked tab and the sphere; it resizes no window (see
+[005](../005-glass-dock-morph/000-plan.md)). Springs start from the on-screen (presentation) value, so a reversal
 mid-flight continues instead of jumping. The panel grows to its full frame before an
 emerge and shrinks to the hover strip only after a retract settles.
 
@@ -156,10 +162,11 @@ extension MotionCurve {   // TidemarkAppearance/CompanionMotion.swift
 }
 ```
 
-- The orb tucks into its edge at half size; the summary and dashboard scale from the
-  point nearest the orb. Opacity eases rather than springs.
-- Nothing renders while hidden. Idle breathing is a Core Animation loop that runs only
-  while the orb is visible.
+- Reveal morphs the docked tab into the sphere and retract morphs it back; a reversal
+  mid-flight continues from the on-screen shape. The summary and dashboard scale from
+  the point nearest the orb. Opacity eases rather than springs.
+- While hidden, only the static tab renders. Idle breathing is a Core Animation loop
+  that runs only while the orb is undocked.
 - Under Reduce Motion or Low Power Mode: no idle motion, and short fades replace springs.
 - Dashboard content changes (hiding or restoring accounts, quotas finishing loading)
   animate per row: stable rows move into place, entering and leaving rows fade, and
@@ -422,9 +429,9 @@ struct QuotaWindow: Codable {
   data; drop its provider list.
 - Direct download, Developer ID signed and notarized, macOS 15 or later. No App Store.
 
-## 7. Settings (2026-11-03 amendment)
+## 7. Settings
 
-The menu's **Settings…** action, the dashboard's gear button, and Command-comma (while Tidemark is active) open a toolbar-style settings window with General, Companion, Usage, and Accounts panes of grouped forms. The scope is the eleven settings selected by the maintainer; no additional appearance, history, refresh-frequency, or notification controls are exposed.
+The menu's **Settings…** action, the dashboard's gear button, and Command-comma (while Tidemark is active) open a toolbar-style settings window with General, Companion, Usage, and Accounts panes of grouped forms. Settings covers only the controls below; there are no appearance, history, refresh-frequency, or notification controls. See [006](../006-settings/000-plan.md).
 
 - Launch at login reflects ServiceManagement's actual main-app registration status, reports errors, and links to Login Items when approval is needed. Opening settings never registers a login item.
 - The optional global shortcut shows/hides the companion. The recorder requires Command, Control, or Option; Escape cancels and Delete clears. Recording suspends the previous shortcut, restores it on cancellation, and reports registration failures. No shortcut is assigned by default.
@@ -433,5 +440,3 @@ The menu's **Settings…** action, the dashboard's gear button, and Command-comm
 - Account visibility is shared with inline dashboard hide/restore controls. Settings reorders accounts by dragging, with context-menu and accessibility move actions. The saved order applies globally, including interleaved providers; consecutive provider runs get separate headings with unique row identities. Unknown/new accounts append; temporarily absent accounts retain their saved slots.
 - Compact summary offers Automatic (one visible account per service, preferring the active account) or one visible account. A missing explicit selection shows unavailable instead of substituting another account. Hiding the selected account resets selection to Automatic.
 - Remaining/used applies to labels, gauge progress, compact summary, tooltips, and accessibility descriptions. Reset countdown/clock applies to quota reset labels. Freshness rules remain fixed.
-
-Implementation and build/package-test evidence is recorded in [006](../006-settings/001-action.md). Settings layout, global key delivery, login-item behavior, and interactive integration remain unverified at runtime until launch is authorized.
