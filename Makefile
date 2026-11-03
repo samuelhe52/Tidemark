@@ -37,6 +37,18 @@ launch: ## Relaunch the last built app, without building
 test: ## Run the engine and data package tests
 	swift test --package-path $(KIT_PATH)
 
+# Release
+.PHONY: dmg
+dmg: ## Build a signed, notarized DMG with the Xcode account (VERSION=x.y.z optional)
+	@scripts/build-dmg.sh
+
+.PHONY: release
+release: ## Build the DMG and publish it as GitHub release vVERSION (VERSION=x.y.z required)
+	@[ -n "$(VERSION)" ] || { echo "Usage: make release VERSION=x.y.z"; exit 1; }
+	@VERSION=$(VERSION) scripts/build-dmg.sh
+	gh release create "v$(VERSION)" build/release/Tidemark-$(VERSION).dmg build/release/Tidemark-$(VERSION).dmg.sha256 \
+		--title "Tidemark $(VERSION)" --generate-notes
+
 # Maintenance
 .PHONY: clean
 clean: ## Clean the Xcode build products and local build artifacts

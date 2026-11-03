@@ -22,3 +22,6 @@ buildServer.json
 # Temporary files and worktrees
 tmp/
 .worktrees/
+
+# Release builds
+build/
