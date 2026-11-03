@@ -10,10 +10,11 @@ Facts about other tools refer to CC Switch 4.0.24 (commit `c0189078`), Claude Co
 and Codex as inspected on 2026-11-02. Their formats can change without notice.
 
 Implementation checkpoint (2026-11-03): the first native companion and passive
-quota path are implemented; see [004](004-first-companion.md) for actual scope and
-validation. The rest of this document remains the full intended contract. Metal,
-manifest skins, managed accounts, live requests, history and durable snapshots are
-not part of that first slice.
+quota path are implemented; see [004](004-first-companion.md). Entry
+[002](../002-live-quota-native-surface/000-plan.md) replaced the SwiftUI surface with
+AppKit views animated by Core Animation, added live requests, CC Switch's managed
+Codex accounts and the last-good store. Metal, manifest skins and history are not
+implemented yet.
 
 ## 1. Rest at the edge
 
@@ -140,21 +141,24 @@ enum Timing {
 
 ### 2.3 Motion and render budget
 
+Every transition animates only layer `transform` and `opacity`, so the render server
+composites it. Springs start from the on-screen (presentation) value, so a reversal
+mid-flight continues instead of jumping. The panel grows to its full frame before an
+emerge and shrinks to the hover strip only after a retract settles.
+
 ```swift
-enum Motion {
-  static let emerge  = Spring(response: 0.42, dampingRatio: 0.72) // slight overshoot
-  static let expand  = Spring(response: 0.36, dampingRatio: 0.86)
-  static let retract = Spring(response: 0.28, dampingRatio: 1.0)  // no bounce on exit
-}
-enum RenderBudget {
-  case off           // hidden, asleep, screen locked: display link stopped
-  case idle(fps: 30) // revealed, still pointer: breathe only
-  case full          // transitions and drag: display max, 120 on ProMotion
+extension MotionCurve {   // TidemarkAppearance/CompanionMotion.swift
+  static let emerge  = MotionCurve(response: 0.42, bounce: 0.22) // slight overshoot
+  static let expand  = MotionCurve(response: 0.36, bounce: 0.1)
+  static let retract = MotionCurve(response: 0.26, bounce: 0)    // no bounce on exit
 }
 ```
 
-- Nothing renders while hidden.
-- Under Reduce Motion or Low Power Mode: no idle motion, and fades replace springs.
+- The orb tucks into its edge at half size; the summary and dashboard scale from the
+  point nearest the orb. Opacity eases rather than springs.
+- Nothing renders while hidden. Idle breathing is a Core Animation loop that runs only
+  while the orb is visible.
+- Under Reduce Motion or Low Power Mode: no idle motion, and short fades replace springs.
 
 ## 3. Dashboard
 
@@ -177,15 +181,20 @@ credentials. Live sources are an opt-in setting.
 | Claude | Passive | The statusline tap (3.2) |
 | Codex | Passive | Newest `token_count.rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (3.3) |
 | Claude | Live, opt-in | Keychain item `Claude Code-credentials`, falling back to `~/.claude/.credentials.json`; `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20` |
-| Codex | Live, opt-in | Keychain item `Codex Auth`, account `cli\|<first 16 hex of SHA-256(codex home)>`, falling back to `~/.codex/auth.json`; `https://chatgpt.com/backend-api/wham/usage` with `ChatGPT-Account-Id` (the upstream workspace ID) and `User-Agent: codex-cli` |
-| Both | Last dated numbers only | CC Switch's other managed accounts |
+| Codex | Live, opt-in | The store `cli_auth_credentials_store` in `$CODEX_HOME/config.toml` names: `auth.json` (default `file`), Keychain item `Codex Auth`, account `cli\|<first 16 hex of SHA-256(codex home)>` (`keyring`), or both (`auto`); `https://chatgpt.com/backend-api/wham/usage` with `ChatGPT-Account-Id` (the upstream workspace ID) and `User-Agent: codex-cli` |
+| Codex | Last dated reading only | CC Switch's other managed accounts (`~/.cc-switch/codex_oauth_auth.json`, identity fields only), from Tidemark's last-good store |
 
 - Live sources serve only the account the agent is logged in with. Tidemark never
-  refreshes, rotates, or writes another tool's credentials; CC Switch owns refresh
-  for its managed Codex accounts.
-- Live requests coalesce per account and honor `Retry-After`, with exponential
-  backoff and jitter. CC Switch does neither, so Tidemark must.
-- Refresh triggers: a timer, reveal, and wake, coalesced in one usage service.
+  refreshes, rotates, or writes another tool's credentials. CC Switch stores only
+  single-use refresh tokens for its managed Codex accounts, so their live numbers are
+  out of reach; each shows the last reading Tidemark took while it was the agent's
+  account, with its age, or "not seen in use yet".
+- An access token that has expired is reported (`credentialExpired`) and never sent.
+- Live requests are gated per account: at most every 5 minutes automatically, 20 s
+  when the user refreshes, `Retry-After` on 429, otherwise exponential backoff from
+  60 s to 30 min with ±20 % jitter. A user refresh never skips a backoff.
+- Refresh triggers: a 60 s timer (passive files; the gate limits live requests),
+  reveal, wake, and the refresh button, coalesced in `UsageService`.
 - The Codex app-server (`account/rateLimits/read`) is not used: it can refresh
   tokens in `~/.codex/auth.json`.
 

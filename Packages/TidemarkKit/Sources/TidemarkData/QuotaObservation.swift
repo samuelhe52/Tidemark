@@ -12,7 +12,7 @@ public enum QuotaService: String, CaseIterable, Codable, Sendable {
 }
 
 public enum QuotaSource: String, Codable, Sendable {
-    case claudeCache, statusline, rollout
+    case claudeCache, statusline, rollout, live
 }
 
 public enum QuotaFreshness: Equatable, Sendable {
@@ -55,19 +55,59 @@ public struct QuotaWindow: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
-public enum QuotaReadIssue: String, Equatable, Sendable {
+public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
+    /// Passive file states.
     case missing, unreadable, unrecognized
+    /// Live is on, but the agent has no usable sign-in.
+    case signedOut
+    /// The agent's access token expired. Tidemark never renews it; the agent does.
+    case credentialExpired
+    /// The Keychain read was denied or cancelled, or the service answered 401/403.
+    case accessDenied
+    /// The service answered 429, or Tidemark is backing off after it.
+    case rateLimited
+    /// Network error, server error, or an unreadable answer.
+    case requestFailed
+    /// A CC Switch account that Tidemark has never seen while it was the agent's account.
+    case notObserved
 }
 
-public struct ServiceObservation: Identifiable, Equatable, Sendable {
-    public var id: QuotaService { service }
+/// One account's newest observation. Windows always come from a single observation.
+public struct AccountUsage: Identifiable, Equatable, Sendable {
+    /// `claude:<accountUuid>`, `codex:<chatgpt_account_id>`, or `<service>:local` when unknown.
+    public let id: String
     public let service: QuotaService
+    public let email: String?
+    /// The vendor's plan string as reported, such as `pro` or `plus`.
+    public let plan: String?
+    /// The account the agent is signed in with right now.
+    public let isActive: Bool
     public let windows: [QuotaWindow]
+    /// Why current data is missing or not live; nil when nothing went wrong.
     public let issue: QuotaReadIssue?
 
-    public init(service: QuotaService, windows: [QuotaWindow] = [], issue: QuotaReadIssue? = nil) {
+    public init(
+        id: String, service: QuotaService, email: String?, plan: String?, isActive: Bool,
+        windows: [QuotaWindow], issue: QuotaReadIssue?
+    ) {
+        self.id = id
         self.service = service
+        self.email = email
+        self.plan = plan
+        self.isActive = isActive
         self.windows = windows
         self.issue = issue
+    }
+}
+
+public struct ServiceUsage: Identifiable, Equatable, Sendable {
+    public var id: QuotaService { service }
+    public let service: QuotaService
+    /// Never empty: the active account (or a placeholder) first, then the others by email.
+    public let accounts: [AccountUsage]
+
+    public init(service: QuotaService, accounts: [AccountUsage]) {
+        self.service = service
+        self.accounts = accounts
     }
 }

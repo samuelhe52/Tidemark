@@ -9,6 +9,7 @@ fixes. Ordinary tasks do not need numbered documentation.
 | ID | Anchor date | Topic / plan | Status | Outcome |
 | --- | --- | --- | --- | --- |
 | 001 | 2026-11-02 | [Companion foundation: product design and scaffold](001-companion-foundation/000-plan.md) | In progress — first native companion and passive quota slice delivered | [Scaffold](001-companion-foundation/002-scaffold.md), [single-source design and build settings](001-companion-foundation/003-single-source-design.md), [first companion](001-companion-foundation/004-first-companion.md) |
+| 002 | 2026-11-03 | [Live quota and a native companion surface](002-live-quota-native-surface/000-plan.md) | Implemented | [Action record](002-live-quota-native-surface/001-action.md) |
 
 ## Find a contract or source
 

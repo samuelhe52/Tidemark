@@ -6,7 +6,7 @@
 //
 
 import AppKit
-import SwiftUI
+import TidemarkAppearance
 
 final class CompanionPanel: NSPanel {
     init() {
@@ -29,76 +29,68 @@ final class CompanionPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// AppKit owns click/drag discrimination, so dragging never accidentally pins the companion.
-struct CompanionInteraction: NSViewRepresentable {
-    let clicked: () -> Void
-    let dragChanged: (CGPoint) -> Void
-    let dragEnded: () -> Void
+/// Holds the orb. AppKit owns click/drag discrimination, so dragging never accidentally pins.
+final class OrbHandleView: NSView {
+    let orb = OrbView(
+        frame: NSRect(x: 0, y: 0, width: CompanionLayout.orbDiameter, height: CompanionLayout.orbDiameter))
+    var clicked: (() -> Void)?
+    var dragChanged: ((CGPoint) -> Void)?
+    var dragEnded: (() -> Void)?
+    private var start: CGPoint?
+    private var dragging = false
 
-    func makeNSView(context: Context) -> InteractionView { InteractionView() }
-    func updateNSView(_ view: InteractionView, context: Context) {
-        view.clicked = clicked
-        view.dragChanged = dragChanged
-        view.dragEnded = dragEnded
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        orb.autoresizingMask = [.width, .height]
+        addSubview(orb)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
     }
 
-    final class InteractionView: NSView {
-        var clicked: (() -> Void)?
-        var dragChanged: ((CGPoint) -> Void)?
-        var dragEnded: (() -> Void)?
-        private var start: CGPoint?
-        private var dragging = false
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
-        override var acceptsFirstResponder: Bool { false }
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) {
-            start = Self.screenPoint(for: event)
-            dragging = false
-        }
-        override func mouseDragged(with event: NSEvent) {
-            guard let start else { return }
-            let point = Self.screenPoint(for: event)
-            if hypot(point.x - start.x, point.y - start.y) >= 4 { dragging = true }
-            if dragging { dragChanged?(point) }
-        }
-        private static func screenPoint(for event: NSEvent) -> CGPoint {
-            event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
-        }
-        override func mouseUp(with event: NSEvent) {
-            guard start != nil else { return }
-            start = nil
-            if dragging { dragEnded?() } else { clicked?() }
-            dragging = false
+    var pinned: Bool {
+        get { orb.pinned }
+        set {
+            orb.pinned = newValue
+            setAccessibilityLabel(newValue ? String(localized: "Unpin Tidemark") : String(localized: "Pin Tidemark"))
         }
     }
-}
 
-/// A native tracking area makes entering the hidden strip independent of global monitor latency.
-final class CompanionHostingView<Content: View>: NSHostingView<Content> {
-    var pointerChanged: ((NSEvent) -> Void)?
-    var stripClicked: ((NSEvent) -> Bool)?
-    var hiddenStripActive: (() -> Bool)?
-    private var companionTrackingArea: NSTrackingArea?
+    override func layout() {
+        super.layout()
+        orb.frame = bounds
+    }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let companionTrackingArea { removeTrackingArea(companionTrackingArea) }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
-            owner: self, userInfo: nil)
-        addTrackingArea(area)
-        companionTrackingArea = area
+    override func accessibilityPerformPress() -> Bool {
+        clicked?()
+        return true
     }
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if hiddenStripActive?() == true { return self }
-        return super.hitTest(point)
-    }
-    override func mouseEntered(with event: NSEvent) { pointerChanged?(event) }
-    override func mouseExited(with event: NSEvent) { pointerChanged?(event) }
-    override func mouseMoved(with event: NSEvent) { pointerChanged?(event) }
+
+    override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.contains(point) ? self : nil
+    }
     override func mouseDown(with event: NSEvent) {
-        if stripClicked?(event) != true { super.mouseDown(with: event) }
+        start = Self.screenPoint(for: event)
+        dragging = false
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let start else { return }
+        let point = Self.screenPoint(for: event)
+        if hypot(point.x - start.x, point.y - start.y) >= 4 { dragging = true }
+        if dragging { dragChanged?(point) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard start != nil else { return }
+        start = nil
+        if dragging { dragEnded?() } else { clicked?() }
+        dragging = false
+    }
+    private static func screenPoint(for event: NSEvent) -> CGPoint {
+        event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
     }
 }

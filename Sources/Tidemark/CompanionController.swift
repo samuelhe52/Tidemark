@@ -6,25 +6,26 @@
 //
 
 import AppKit
-import Combine
-import SwiftUI
 import TidemarkData
 import TidemarkEngine
 
 @MainActor
-final class CompanionController: NSObject, ObservableObject {
-    @Published private(set) var state = CompanionState()
-    @Published private(set) var layout: CompanionLayout?
-    @Published private(set) var observations = QuotaService.allCases.map {
-        ServiceObservation(service: $0, issue: .missing)
-    }
-    @Published private(set) var refreshing = false
-    let panel = CompanionPanel()
-    private let reader: PassiveQuotaReader
+final class CompanionController: NSObject {
+    private(set) var state = CompanionState()
+    private(set) var liveEnabled: Bool
+    private var layout: CompanionLayout?
+    private let panel = CompanionPanel()
+    private let stage = CompanionStageView(frame: .zero)
+    private let usageService: UsageService
+    private var usage: [ServiceUsage] = []
+    private var refreshedAt: Date?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshAgain = false
     private var placement: DockPlacement?
     private var anchor: DockAnchor?
     private var deadlineTimer: Timer?
     private var pointerTimer: Timer?
+    private var clockTimer: Timer?
     private var refreshTimer: Timer?
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -33,12 +34,16 @@ final class CompanionController: NSObject, ObservableObject {
     private var locked = false
     private var dragPoint: CGPoint?
     private var lastRefresh = Date.distantPast
+    /// True while the panel is shrunk to the hover strip; it grows only for visible phases.
+    private var panelShowsStrip = true
+    /// Identifies the newest presentation, so a superseded retract never shrinks the panel.
+    private var presentationGeneration = 0
+
+    private static let liveDefaultsKey = "liveUsageEnabled"
 
     override init() {
-        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap {
-            $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
-        }
-        reader = PassiveQuotaReader(codexHome: codexHome)
+        liveEnabled = UserDefaults.standard.bool(forKey: Self.liveDefaultsKey)
+        usageService = UsageService(liveEnabled: liveEnabled)
         super.init()
     }
 
@@ -46,18 +51,23 @@ final class CompanionController: NSObject, ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "dockPlacement") {
             placement = try? JSONDecoder().decode(DockPlacement.self, from: data)
         }
-        let hosting = CompanionHostingView(rootView: CompanionRootView(controller: self))
-        hosting.hiddenStripActive = { [weak self] in self?.state.phase == .hidden }
-        hosting.pointerChanged = { [weak self] event in
+        stage.hiddenStripActive = { [weak self] in self?.state.phase == .hidden }
+        stage.pointerChanged = { [weak self] event in
             self?.reconcilePointer(at: event.window?.convertPoint(toScreen: event.locationInWindow))
         }
-        hosting.stripClicked = { [weak self] event in
+        stage.stripClicked = { [weak self] event in
             let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
             guard let self, self.layout?.strip.contains(point) == true else { return false }
             self.send(.companionClicked)
             return true
         }
-        panel.contentView = hosting
+        stage.orbHandle.clicked = { [weak self] in self?.send(.companionClicked) }
+        stage.orbHandle.dragChanged = { [weak self] in self?.dragChanged(to: $0) }
+        stage.orbHandle.dragEnded = { [weak self] in self?.dragEnded() }
+        stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        stage.dashboard.onLiveChanged = { [weak self] in self?.setLiveEnabled($0) }
+        panel.contentView = stage
+        renderUsage()
         updatePlacement()
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) {
             [weak self] _ in
@@ -95,26 +105,26 @@ final class CompanionController: NSObject, ObservableObject {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(screenUnlocked), name: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil)
+        // Passive files every minute; the usage service rate-limits live requests on its own.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.sleeping, !self.locked else { return }
-                self.refresh()
+                self.refresh(userInitiated: false)
             }
         }
-        refresh()
+        refresh(userInitiated: false)
         reconcilePointer()
     }
 
     func stop() {
-        deadlineTimer?.invalidate()
-        pointerTimer?.invalidate()
-        refreshTimer?.invalidate()
+        for timer in [deadlineTimer, pointerTimer, clockTimer, refreshTimer] { timer?.invalidate() }
         for monitor in [globalMonitor, localMonitor, escapeMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(monitor)
         }
         globalMonitor = nil
         localMonitor = nil
         escapeMonitor = nil
+        refreshTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -125,7 +135,9 @@ final class CompanionController: NSObject, ObservableObject {
         guard !sleeping, !locked else { return }
         let previous = state.phase
         state.send(event, now: ProcessInfo.processInfo.systemUptime)
-        if previous == .hidden, state.phase != .hidden, Date().timeIntervalSince(lastRefresh) >= 5 { refresh() }
+        if previous == .hidden, state.phase != .hidden, Date().timeIntervalSince(lastRefresh) >= 5 {
+            refresh(userInitiated: false)
+        }
         deadlineTimer?.invalidate()
         if let deadline = state.nextDeadline {
             deadlineTimer = Timer.scheduledTimer(
@@ -140,12 +152,22 @@ final class CompanionController: NSObject, ObservableObject {
         if state.phase == .hidden {
             pointerTimer?.invalidate()
             pointerTimer = nil
-        } else if pointerTimer == nil {
-            pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.reconcilePointer() }
+            clockTimer?.invalidate()
+            clockTimer = nil
+        } else {
+            if pointerTimer == nil {
+                pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                    Task { @MainActor in self?.reconcilePointer() }
+                }
+            }
+            if clockTimer == nil {
+                // Countdowns and ages have minute resolution.
+                clockTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+                    Task { @MainActor in self?.renderUsage() }
+                }
             }
         }
-        if previous != state.phase { updatePanelFrame() }
+        if previous != state.phase { present(animated: true) }
         updateHitTesting()
     }
 
@@ -164,19 +186,77 @@ final class CompanionController: NSObject, ObservableObject {
         persistPlacement()
     }
 
-    func refresh() {
-        guard !refreshing else { return }
-        refreshing = true
-        Task { [weak self, reader] in
-            let result = await reader.read()
-            guard let self else { return }
-            self.observations = result
-            self.refreshing = false
-            self.lastRefresh = .now
+    func setLiveEnabled(_ enabled: Bool) {
+        guard enabled != liveEnabled else { return }
+        liveEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.liveDefaultsKey)
+        renderUsage()
+        Task { [usageService] in
+            await usageService.setLiveEnabled(enabled)
+            self.refresh(userInitiated: true)
         }
     }
 
-    func dragChanged(to point: CGPoint) {
+    func refresh(userInitiated: Bool) {
+        guard refreshTask == nil else {
+            refreshAgain = refreshAgain || userInitiated
+            return
+        }
+        refreshTask = Task { [weak self, usageService] in
+            let result = await usageService.refresh(userInitiated: userInitiated)
+            guard let self else { return }
+            self.usage = result
+            self.refreshedAt = .now
+            self.lastRefresh = .now
+            self.refreshTask = nil
+            self.renderUsage()
+            if self.refreshAgain {
+                self.refreshAgain = false
+                self.refresh(userInitiated: true)
+            }
+        }
+        renderUsage()
+    }
+
+    // MARK: - Presentation
+
+    private func present(animated: Bool) {
+        guard let layout else { return }
+        presentationGeneration += 1
+        let generation = presentationGeneration
+        if state.phase != .hidden, panelShowsStrip {
+            // Grow first: the glow keeps its screen position, so the change is invisible.
+            panelShowsStrip = false
+            panel.setFrame(layout.frame, display: false)
+            stage.place(layout, in: layout.frame)
+        }
+        stage.orbHandle.pinned = state.phase == .pinned
+        stage.show(state.phase, layout: layout, animated: animated) { [weak self] in
+            guard let self, generation == self.presentationGeneration, self.state.phase == .hidden else { return }
+            self.collapseToStrip()
+        }
+    }
+
+    /// Shrinks the panel to the hover strip once the retract has finished.
+    private func collapseToStrip() {
+        guard let layout, !panelShowsStrip else { return }
+        panelShowsStrip = true
+        panel.setFrame(layout.strip, display: true)
+        stage.place(layout, in: layout.strip)
+        updateHitTesting()
+    }
+
+    private func renderUsage() {
+        let now = Date()
+        stage.summary.update(text: QuotaText.summary(usage, now: now))
+        stage.dashboard.update(
+            usage, liveEnabled: liveEnabled, refreshing: refreshTask != nil, refreshedAt: refreshedAt, now: now)
+        applyLayout()
+    }
+
+    // MARK: - Dragging
+
+    private func dragChanged(to point: CGPoint) {
         if state.phase != .dragging { send(.dragBegan) }
         dragPoint = point
         if let nearest = DockGeometry.nearest(to: point, displays: displays()) {
@@ -185,7 +265,7 @@ final class CompanionController: NSObject, ObservableObject {
         }
     }
 
-    func dragEnded() {
+    private func dragEnded() {
         if let point = dragPoint, let nearest = DockGeometry.nearest(to: point, displays: displays()) {
             placement = nearest.placement
             anchor = nearest
@@ -196,6 +276,8 @@ final class CompanionController: NSObject, ObservableObject {
         send(.dragEnded)
         reconcilePointer()
     }
+
+    // MARK: - Pointer and geometry
 
     private func reconcilePointer(at eventPoint: CGPoint? = nil) {
         guard let layout, !sleeping, !locked else { return }
@@ -208,7 +290,10 @@ final class CompanionController: NSObject, ObservableObject {
 
     private func updateHitTesting() {
         guard let layout else { return }
-        panel.ignoresMouseEvents = state.phase != .hidden && !layout.contains(NSEvent.mouseLocation, phase: state.phase)
+        // The strip-sized panel always listens; a larger panel listens only inside the companion's shape.
+        panel.ignoresMouseEvents =
+            !panelShowsStrip && state.phase != .dragging
+            && !layout.contains(NSEvent.mouseLocation, phase: state.phase)
     }
 
     private func displays() -> [DockDisplay] {
@@ -237,15 +322,14 @@ final class CompanionController: NSObject, ObservableObject {
 
     private func applyLayout() {
         guard let anchor else { return }
-        let newLayout = CompanionLayout(anchor: anchor, dragPoint: dragPoint)
+        let newLayout = CompanionLayout(
+            anchor: anchor, dragPoint: dragPoint, summarySize: stage.summary.preferredSize,
+            dashboardSize: stage.dashboard.preferredSize(maxHeight: CompanionLayout.dashboardMaxHeight(for: anchor)))
         layout = newLayout
-        updatePanelFrame()
+        let container = panelShowsStrip ? newLayout.strip : newLayout.frame
+        if panel.frame != container { panel.setFrame(container, display: true) }
+        stage.place(newLayout, in: container)
         updateHitTesting()
-    }
-
-    private func updatePanelFrame() {
-        guard let layout else { return }
-        panel.setFrame(state.phase == .hidden ? layout.strip : layout.frame, display: true)
     }
 
     private func persistPlacement() {
@@ -255,9 +339,14 @@ final class CompanionController: NSObject, ObservableObject {
 
     private func suspend() {
         state.send(.reset, now: ProcessInfo.processInfo.systemUptime)
-        deadlineTimer?.invalidate()
-        pointerTimer?.invalidate()
+        for timer in [deadlineTimer, pointerTimer, clockTimer] { timer?.invalidate() }
         pointerTimer = nil
+        clockTimer = nil
+        if let layout {
+            presentationGeneration += 1
+            stage.show(.hidden, layout: layout, animated: false)
+            collapseToStrip()
+        }
         panel.orderOut(nil)
     }
 
@@ -271,7 +360,7 @@ final class CompanionController: NSObject, ObservableObject {
     @objc private func didWake() {
         sleeping = false
         updatePlacement()
-        refresh()
+        refresh(userInitiated: false)
     }
     @objc private func screenLocked() {
         locked = true
@@ -280,6 +369,6 @@ final class CompanionController: NSObject, ObservableObject {
     @objc private func screenUnlocked() {
         locked = false
         updatePlacement()
-        refresh()
+        refresh(userInitiated: false)
     }
 }
