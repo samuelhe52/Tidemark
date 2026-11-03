@@ -60,21 +60,25 @@ public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     case missing, unreadable, unrecognized
     /// Live is on, but the agent has no usable sign-in.
     case signedOut
-    /// The agent's access token expired. Tidemark never renews it; the agent does.
+    /// The sign-in expired or its managed renewal was rejected.
     case credentialExpired
+    /// The account changed during renewal, or another Tidemark process is renewing it.
+    case credentialChanged
+    /// Renewal succeeded but its rotated credentials could not be saved.
+    case credentialSaveFailed
     /// The Keychain read was denied or cancelled, or the service answered 401/403.
     case accessDenied
     /// The service answered 429, or Tidemark is backing off after it.
     case rateLimited
     /// Network error, server error, or an unreadable answer.
     case requestFailed
-    /// A CC Switch account that Tidemark has never seen while it was the agent's account.
+    /// An account without a recorded reading while live queries are disabled.
     case notObserved
 }
 
 /// One account's newest observation. Windows always come from a single observation.
 public struct AccountUsage: Identifiable, Equatable, Sendable {
-    /// `claude:<accountUuid>`, `codex:<chatgpt_account_id>`, or `<service>:local` when unknown.
+    /// Managed Codex accounts use `codex:managed:<localId>`; workspace IDs alone are not unique users.
     public let id: String
     public let service: QuotaService
     public let email: String?

@@ -82,14 +82,30 @@ enum QuotaParser {
     /// The `exp` claim of a JWT access token. The signature is not checked; this only avoids
     /// sending a token that has certainly expired.
     static func tokenExpiry(_ token: String) -> Date? {
+        guard let exp = number(tokenClaims(token)?["exp"]), exp > 0 else { return nil }
+        return Date(timeIntervalSince1970: exp)
+    }
+
+    /// Identity hints only, never proof of authentication. The upstream authenticates the token.
+    static func tokenIdentity(_ token: String) -> String? {
+        guard let claims = tokenClaims(token) else { return nil }
+        let auth = claims["https://api.openai.com/auth"] as? [String: Any]
+        return [auth?["chatgpt_user_id"], auth?["user_id"], claims["sub"]]
+            .compactMap { $0 as? String }.first { !$0.isEmpty }
+    }
+
+    static func tokenWorkspace(_ token: String) -> String? {
+        let auth = tokenClaims(token)?["https://api.openai.com/auth"] as? [String: Any]
+        return auth?["chatgpt_account_id"] as? String
+    }
+
+    private static func tokenClaims(_ token: String) -> [String: Any]? {
         let parts = token.split(separator: ".")
         guard parts.count >= 2 else { return nil }
         var payload = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
-        guard let data = Data(base64Encoded: payload), let exp = number(object(data)?["exp"]), exp > 0 else {
-            return nil
-        }
-        return Date(timeIntervalSince1970: exp)
+        guard let data = Data(base64Encoded: payload) else { return nil }
+        return object(data)
     }
 
     static func windowID(seconds: TimeInterval?) -> String? {

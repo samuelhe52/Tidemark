@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Security
 import Testing
 
 @testable import TidemarkData
@@ -23,7 +24,7 @@ struct LiveUsageTests {
         #expect(fixture.transport.requests.isEmpty)
         // `auth.json` names acct-a, so CC Switch's older marker for acct-b does not decide.
         let codex = try #require(services.last?.accounts)
-        #expect(codex.map(\.id) == ["codex:acct-a", "codex:acct-b"])
+        #expect(codex.map(\.id) == ["codex:managed:local-0", "codex:managed:local-1"])
         #expect(codex.map(\.isActive) == [true, false])
         #expect(codex.last?.issue == .notObserved)
     }
@@ -57,17 +58,17 @@ struct LiveUsageTests {
         }
         let services = await fixture.service(live: true, now: now).refresh(userInitiated: false)
         let codex = try #require(services.last?.accounts)
-        #expect(codex.map(\.id) == ["codex:acct-a", "codex:acct-b", "codex:acct-c"])
+        #expect(codex.map(\.id) == ["codex:managed:local-0", "codex:managed:local-1", "codex:managed:local-2"])
         #expect(codex[0].isActive && codex[0].email == "a@example.com" && codex[0].plan == "plus")
         #expect(codex[0].windows.first?.remainingPercent(at: now) == 30)
         #expect(codex[1].windows.first?.usedPercent == 40)
-        #expect(codex[1].issue == nil)
-        #expect(codex[2].windows.isEmpty && codex[2].issue == .notObserved)
+        #expect(codex[1].issue == .credentialExpired)
+        #expect(codex[2].windows.isEmpty && codex[2].issue == .credentialExpired)
         // The live reading is kept for later, without the token that fetched it.
         let saved = try String(
             contentsOf: fixture.home.appending(path: "Library/Application Support/Tidemark/usage-snapshots.json"),
             encoding: .utf8)
-        #expect(saved.contains("codex:acct-a"))
+        #expect(saved.contains("codex:managed:local-0"))
         #expect(!saved.contains(Fixture.jwt(expiry: now + 3600)))
     }
 
@@ -141,7 +142,7 @@ struct LiveUsageTests {
 }
 
 /// A temporary home directory with fake credentials and network.
-final class Fixture {
+final class Fixture: @unchecked Sendable {
     let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     let credentials = FakeCredentials()
     let transport = FakeTransport()
@@ -206,16 +207,23 @@ final class FakeCredentials: CredentialStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storedItems: [String: Data] = [:]
     private var storedReads: [String] = []
+    private var storedDenied: Set<String> = []
 
     var items: [String: Data] {
         get { lock.withLock { storedItems } }
         set { lock.withLock { storedItems = newValue } }
     }
     var reads: [String] { lock.withLock { storedReads } }
+    /// Services whose reads fail as if the user denied the Keychain prompt.
+    var denied: Set<String> {
+        get { lock.withLock { storedDenied } }
+        set { lock.withLock { storedDenied = newValue } }
+    }
 
     func genericPassword(service: String, account: String?) throws -> Data? {
-        lock.withLock {
+        try lock.withLock {
             storedReads.append(service)
+            if storedDenied.contains(service) { throw CredentialAccessError(status: errSecUserCanceled) }
             return storedItems[service]
         }
     }

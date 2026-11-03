@@ -89,9 +89,10 @@ A two-reviewer Codex review with a debate pass found six defects, all fixed befo
 ## Open questions
 
 - Whether 0.6 tint strength is the right legibility/translucency balance.
-- Inactive CC Switch Codex accounts get numbers only after Tidemark observes them as
-  the active account. Live numbers would need refresh-token use, which would rotate
-  CC Switch's single-use tokens.
+- The original inactive-account limitation is superseded by
+  [003 direct multi-account quota](../003-direct-multi-account-quota/000-plan.md),
+  which records the maintainer's subsequent authorization to reuse and rotate
+  CC Switch's managed Codex tokens, and its concurrency limitation.
 - The statusline tap is still attributed by timing only: a Claude account switch made
   while Tidemark was not running, or a tap written after the switch by an older session,
   can still be credited to the new account.

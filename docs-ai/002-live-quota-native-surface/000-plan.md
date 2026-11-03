@@ -98,4 +98,6 @@ memory only; an expired token is reported, never refreshed.
 
 ## Amendments
 
-None yet.
+- Updated 2026-11-03: The active-only credential policy in this entry describes its
+  original delivery. The maintainer subsequently authorized managed Codex reuse
+  and rotation; see [003 direct multi-account quota](../003-direct-multi-account-quota/000-plan.md).

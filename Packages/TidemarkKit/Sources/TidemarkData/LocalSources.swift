@@ -8,7 +8,7 @@
 import Foundation
 
 /// Reads the files other tools write. Every file is opened read-only, and only quota and
-/// identity fields are kept; tokens in the same files never become Swift values.
+/// identity fields are kept. Managed ID tokens are decoded only for user identity hints.
 struct LocalSources {
     let environment: UsageEnvironment
 
@@ -125,29 +125,49 @@ struct LocalSources {
         return "file"
     }
 
-    struct ManagedCodexAccount: Equatable {
+    struct ManagedCodexAccount: Equatable, Sendable {
+        let localID: String
         let chatGPTAccountID: String
         let email: String?
+        let userIdentity: String?
+
+        var key: String { "codex:managed:\(localID)" }
     }
 
-    /// CC Switch's managed Codex accounts. Only identity fields are decoded.
+    /// CC Switch's managed Codex account identities.
     func managedCodexAccounts() -> [ManagedCodexAccount] {
         struct Store: Decodable {
             struct Account: Decodable {
-                let chatgpt_account_id: String?
+                let chatgptAccountId: String?
                 let email: String?
+                let idToken: String?
             }
             let accounts: [String: Account]?
         }
         let url = environment.ccSwitchHome.appending(path: "codex_oauth_auth.json")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         guard let data = try? Self.bounded(url, maximumBytes: 4 * 1024 * 1024),
-            let store = try? JSONDecoder().decode(Store.self, from: data)
+            let store = try? decoder.decode(Store.self, from: data)
         else { return [] }
-        var seen = Set<String>()
-        return (store.accounts ?? [:]).values.compactMap { account in
-            guard let id = account.chatgpt_account_id, !id.isEmpty, seen.insert(id).inserted else { return nil }
-            return ManagedCodexAccount(chatGPTAccountID: id, email: account.email)
+        return (store.accounts ?? [:]).compactMap { localID, account in
+            guard !localID.isEmpty, let id = account.chatgptAccountId, !id.isEmpty else { return nil }
+            return ManagedCodexAccount(
+                localID: localID, chatGPTAccountID: id, email: account.email,
+                userIdentity: account.idToken.flatMap(QuotaParser.tokenIdentity))
+        }.sorted { $0.localID < $1.localID }
+    }
+
+    func codexAuthUserIdentity() -> String? {
+        struct Auth: Decodable {
+            struct Tokens: Decodable { let idToken: String? }
+            let tokens: Tokens?
         }
+        let url = environment.codexHome.appending(path: "auth.json")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let data = try? Self.bounded(url, maximumBytes: 1024 * 1024) else { return nil }
+        return (try? decoder.decode(Auth.self, from: data))?.tokens?.idToken.flatMap(QuotaParser.tokenIdentity)
     }
 
     /// The account CC Switch last made live for Codex, from its identity marker (no secrets).

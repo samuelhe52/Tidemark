@@ -66,7 +66,9 @@ enum QuotaText {
         case .credentialExpired:
             service == .claude
                 ? String(localized: "Sign-in expired. Open Claude Code to renew it.")
-                : String(localized: "Sign-in expired. Open Codex to renew it.")
+                : String(localized: "Sign-in expired. Sign in again in CC Switch or Codex.")
+        case .credentialChanged: String(localized: "Sign-in changed or is being renewed. Tidemark will retry.")
+        case .credentialSaveFailed: String(localized: "Couldn't save the renewed sign-in. Check CC Switch.")
         case .accessDenied: String(localized: "Access was denied")
         case .rateLimited: String(localized: "Rate limited. Tidemark will retry later.")
         case .requestFailed: String(localized: "Couldn't reach the usage service")

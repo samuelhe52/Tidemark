@@ -182,14 +182,21 @@ credentials. Live sources are an opt-in setting.
 | Codex | Passive | Newest `token_count.rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (3.3) |
 | Claude | Live, opt-in | Keychain item `Claude Code-credentials`, falling back to `~/.claude/.credentials.json`; `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20` |
 | Codex | Live, opt-in | The store `cli_auth_credentials_store` in `$CODEX_HOME/config.toml` names: `auth.json` (default `file`), Keychain item `Codex Auth`, account `cli\|<first 16 hex of SHA-256(codex home)>` (`keyring`), or both (`auto`); `https://chatgpt.com/backend-api/wham/usage` with `ChatGPT-Account-Id` (the upstream workspace ID) and `User-Agent: codex-cli` |
-| Codex | Last dated reading only | CC Switch's other managed accounts (`~/.cc-switch/codex_oauth_auth.json`, identity fields only), from Tidemark's last-good store |
+| Codex managed accounts | Live, opt-in | CC Switch's `~/.cc-switch/codex_oauth_auth.json` v2; reuse each account's refresh token to obtain an access token and query `wham/usage`, independently of the active provider. See [003](../003-direct-multi-account-quota/000-plan.md). |
 
-- Live sources serve only the account the agent is logged in with. Tidemark never
-  refreshes, rotates, or writes another tool's credentials. CC Switch stores only
-  single-use refresh tokens for its managed Codex accounts, so their live numbers are
-  out of reach; each shows the last reading Tidemark took while it was the agent's
-  account, with its age, or "not seen in use yet".
-- An access token that has expired is reported (`credentialExpired`) and never sent.
+- Managed Codex accounts use their CC Switch local account IDs, so users in the
+  same workspace remain distinct. The maintainer authorized reuse and renewal on
+  2026-11-03. Tidemark caches access tokens only in memory and saves rotated refresh
+  and ID tokens back to CC Switch, preserving unrelated fields and accounts.
+  Native Codex auth and Claude credentials remain read-only.
+- Tidemark rereads credentials before renewing and before saving, rejects detected
+  generation changes, and locks its own renewal processes. The unmodified CC Switch
+  desktop does not honor that lock and can retain a consumed refresh token in memory.
+  Reuse therefore does not guarantee safe concurrent desktop refresh. An unsaved
+  rotation is retained in memory for write-back retry; exiting before it is saved
+  can still lose that rotation.
+- Expired native access tokens are never sent. Managed Codex accounts can renew
+  them; expired Claude sign-ins and rejected renewals report `credentialExpired`.
 - Live requests are gated per account: at most every 5 minutes automatically, 20 s
   when the user refreshes, `Retry-After` on 429, otherwise exponential backoff from
   60 s to 30 min with ±20 % jitter. A user refresh never skips a backoff.
@@ -247,7 +254,11 @@ five-hour limit. Every window is optional.
   `seven_day_sonnet`, `seven_day_fable`, and `limits[]` rows with
   `kind = "weekly_scoped"`, which override the legacy windows.
 - Codex accounts are `{version, accounts, default_account_id}`, each with
-  `account_id` (a local UUID) and `chatgpt_account_id`. Windows are named by length:
+  `account_id` (a local UUID) and `chatgpt_account_id` (a workspace). Managed quota
+  rows use `codex:managed:<localId>`; the workspace is an HTTP header, not a unique
+  user. Old workspace-keyed snapshots migrate only for a uniquely mapped account
+  with a matching stored email and no contradictory active identity.
+  Windows are named by length:
   `limit_window_seconds` maps to `five_hour`, `seven_day`, or `30_day`.
 
 ### 3.5 Freshness
