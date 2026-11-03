@@ -90,15 +90,64 @@ struct UsageHistoryTests {
         // All time runs by month from the first usage: September through November.
         let all = try read(fixture, .all).get()
         #expect(all.buckets.map(\.totals.totalTokens) == [10, 1159, 1030])
+        #expect(all.days.reduce(UsageTotals()) { $0 + $1.totals } == all.total)
+        #expect(all.days.first?.interval.start == Self.calendar.startOfDay(for: Self.now - 40 * 86400))
+        #expect(all.days.last?.interval.start == Self.calendar.startOfDay(for: Self.now))
+        #expect(all.days.count == 41)
+        #expect(all.days.last?.totals.totalTokens == 1020)
+        #expect(all.days[16].totals.totalTokens == 110)  // Oct 10 rollup
+        #expect(all.days[17].totals.totalTokens == 50)  // Oct 11 rollup
+        #expect(all.days[39].totals.totalTokens == 10)  // deduplicated Nov 2 detail
+        #expect(all.days[38].totals.isEmpty == true)
+        #expect(month.days.isEmpty)
     }
 
-    private func read(_ fixture: Fixture, _ range: UsageHistoryRange) -> Result<UsageHistory, UsageHistoryIssue> {
+    @Test func dailyHeatmapPreservesDSTAndLongHistories() throws {
+        let fixture = try Fixture()
+        try makeDatabase(
+            fixture,
+            rollups: ["('2020-01-01', 'claude', 'p', 'm', '', 1, 10, 0, 0, 0, '1')"],
+            logs: ["('a', 'claude', 'm', 20, 0, 0, 0, '1', 200, 'proxy', \(Int(Self.now.timeIntervalSince1970)))"])
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let all = try read(fixture, .all, calendar: calendar).get()
+        #expect(all.days.count > 2000)
+        #expect(all.days.reduce(UsageTotals()) { $0 + $1.totals } == all.total)
+        #expect(all.days.first?.totals.totalTokens == 10)
+        #expect(all.days.last?.totals.totalTokens == 20)
+        #expect(all.days.contains { $0.interval.duration == 23 * 3600 })
+        #expect(all.days.contains { $0.interval.duration == 25 * 3600 })
+        #expect(
+            zip(all.days, all.days.dropFirst()).allSatisfy {
+                $0.interval.end == $1.interval.start && calendar.component(.hour, from: $1.interval.start) == 0
+            })
+    }
+
+    @Test func allTimeFoldsImplausiblyOldDatesIntoTheOldestBucket() throws {
+        let fixture = try Fixture()
+        try makeDatabase(
+            fixture,
+            rollups: [
+                "('1970-01-02', 'claude', 'p', 'm', '', 1, 5, 0, 0, 0, '1')",
+                "('2026-11-01', 'claude', 'p', 'm', '', 1, 10, 0, 0, 0, '1')"
+            ],
+            logs: ["('a', 'claude', 'm', 20, 0, 0, 0, '1', 200, 'proxy', \(Int(Self.now.timeIntervalSince1970)))"])
+        let all = try read(fixture, .all).get()
+        #expect(all.days.count <= UsageHistoryReader.allTimeYears * 366 + 1)
+        #expect(all.buckets.count <= UsageHistoryReader.allTimeYears * 12 + 1)
+        #expect(all.days.first?.totals.totalTokens == 5)
+        #expect(all.days.reduce(UsageTotals()) { $0 + $1.totals } == all.total)
+    }
+
+    private func read(
+        _ fixture: Fixture, _ range: UsageHistoryRange, calendar: Calendar = Self.calendar
+    ) -> Result<UsageHistory, UsageHistoryIssue> {
         let environment = UsageEnvironment(
             home: fixture.home, codexHome: fixture.home.appending(path: ".codex"),
             ccSwitchHome: fixture.home.appending(path: ".cc-switch"),
             supportDirectory: fixture.home.appending(path: "Tidemark"), credentials: fixture.credentials,
             transport: fixture.transport, now: { Self.now })
-        return UsageHistoryReader(environment: environment).read(range, now: Self.now, calendar: Self.calendar)
+        return UsageHistoryReader(environment: environment).read(range, now: Self.now, calendar: calendar)
     }
 
     /// The columns Tidemark reads, with CC Switch's names and defaults.

@@ -18,10 +18,16 @@ final class DashboardView: NSView {
     var onOpenSettings: (() -> Void)?
     var onHistoryRangeChanged: ((UsageHistoryRange) -> Void)?
     var onHistoryViewChanged: ((HistoryView) -> Void)?
+    /// The heat map span being viewed; outlives the heat map, which is rebuilt as today's usage grows.
+    var heatmapPage = 0
 
     /// How the history section breaks down the range.
     enum HistoryView: String, CaseIterable {
         case chart, harness, model
+    }
+
+    enum HistoryChartStyle: String, CaseIterable {
+        case heatmap, bars
     }
 
     /// CC Switch history for the dashboard: the chosen range and the newest reading for it.

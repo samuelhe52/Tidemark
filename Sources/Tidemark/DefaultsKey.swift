@@ -20,6 +20,7 @@ enum DefaultsKey {
     static let resetTimeStyle = "quotaResetTimeStyle"
     static let dockPlacement = "dockPlacement"
     static let historyRange = "usageHistoryRange"
+    static let historyChartStyle = "usageHistoryChartStyle"
     static let historyView = "usageHistoryView"
     static let requestLogColumnOrder = "requestLogColumnOrder"
     static let requestLogHiddenColumns = "requestLogHiddenColumns"

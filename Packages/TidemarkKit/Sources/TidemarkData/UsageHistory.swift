@@ -45,7 +45,7 @@ public enum UsageHistoryRange: String, CaseIterable, Codable, Sendable {
 
 /// Token and API-equivalent cost totals. Input counts fresh tokens only, so the four token
 /// kinds add up without counting cache reads twice.
-public struct UsageTotals: Equatable, Sendable {
+public struct UsageTotals: Hashable, Sendable {
     public var requests: Int
     /// What the same tokens would cost at API prices; not a bill.
     public var costUSD: Double
@@ -98,7 +98,7 @@ public struct UsageGroup: Identifiable, Equatable, Sendable {
 }
 
 /// One bar of the chart: a local hour, day or month.
-public struct UsageBucket: Equatable, Sendable {
+public struct UsageBucket: Hashable, Sendable {
     public let interval: DateInterval
     public let totals: UsageTotals
 }
@@ -113,6 +113,8 @@ public struct UsageHistory: Equatable, Sendable {
     /// Consecutive buckets in `range.bucketUnit`, oldest first, including empty ones. All time
     /// starts at the month of the first usage.
     public let buckets: [UsageBucket]
+    /// Daily totals for the all-time heat map, including empty days through today.
+    public let days: [UsageBucket]
     /// The newest detail row CC Switch recorded, in any range; tells how current the history is.
     public let latestRecordAt: Date?
 
@@ -217,6 +219,8 @@ public struct UsageHistoryReader: Sendable {
                     range: range, interval: interval, apps: Self.group(slices, by: \.app),
                     models: models,
                     buckets: Self.buckets(slices, range: range, interval: interval, calendar: calendar),
+                    days: range == .all
+                        ? Self.buckets(slices, range: range, interval: interval, calendar: calendar, unit: .day) : [],
                     latestRecordAt: latest.map { Date(timeIntervalSince1970: TimeInterval($0)) }))
         } catch let issue as UsageHistoryIssue {
             return .failure(issue)
@@ -234,14 +238,21 @@ public struct UsageHistoryReader: Sendable {
             .sorted { ($0.totals.totalTokens, $1.key) > ($1.totals.totalTokens, $0.key) }
     }
 
+    /// How far back All Time buckets reach.
+    static let allTimeYears = 20
+
     private static func buckets(
-        _ slices: [Slice], range: UsageHistoryRange, interval: DateInterval, calendar: Calendar
+        _ slices: [Slice], range: UsageHistoryRange, interval: DateInterval, calendar: Calendar,
+        unit overrideUnit: Calendar.Component? = nil
     ) -> [UsageBucket] {
-        let unit = range.bucketUnit
+        let unit = overrideUnit ?? range.bucketUnit
         let first: Date
         if range == .all {
-            let earliest = slices.map(\.date).min() ?? interval.end
-            first = calendar.dateInterval(of: .month, for: earliest)?.start ?? earliest
+            // A corrupt date near the 1970 query start must not produce tens of thousands of buckets.
+            // Anything older than the floor folds into the oldest bucket, so totals still agree.
+            let floor = calendar.date(byAdding: .year, value: -Self.allTimeYears, to: interval.end) ?? interval.end
+            let earliest = max(slices.map(\.date).min() ?? interval.end, floor)
+            first = calendar.dateInterval(of: unit, for: earliest)?.start ?? earliest
         } else {
             first = interval.start
         }
@@ -252,7 +263,7 @@ public struct UsageHistoryReader: Sendable {
             : calendar.dateInterval(of: unit, for: interval.end)?.end ?? interval.end
         var starts: [Date] = []
         var cursor = first
-        while cursor < last, starts.count < 2000 {
+        while cursor < last {
             starts.append(cursor)
             guard let next = calendar.date(byAdding: unit, value: 1, to: cursor), next > cursor else { break }
             cursor = next

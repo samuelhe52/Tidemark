@@ -153,7 +153,7 @@ struct UsageSettingsView: View {
     @Bindable var settings: SettingsStore
 
     var body: some View {
-        SettingsPane(height: 350) {
+        SettingsPane(height: 390) {
             Section {
                 Toggle("Live usage", isOn: $settings.liveUsageEnabled)
             } footer: {
@@ -162,6 +162,11 @@ struct UsageSettingsView: View {
                 )
             }
             Section("Display") {
+                Picker("All-time chart", selection: $settings.historyChartStyle) {
+                    Text("Heat map").tag(DashboardView.HistoryChartStyle.heatmap)
+                    Text("Monthly bars").tag(DashboardView.HistoryChartStyle.bars)
+                }
+                .pickerStyle(.segmented)
                 Picker("Show quota as", selection: $settings.display.percentageStyle) {
                     Text("Remaining").tag(QuotaPercentageStyle.remaining)
                     Text("Used").tag(QuotaPercentageStyle.used)

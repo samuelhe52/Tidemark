@@ -93,3 +93,5 @@ reuses the per-row transitions and scrolling.
 ## Amendments
 
 - Updated 2026-11-03: 14-day range and chart / by-harness / by-model views — see [002-views-and-14-day.md](002-views-and-14-day.md)
+
+- Updated 2026-11-04: default All Time heat map and chart style preference in Settings — see [003-all-time-heatmap.md](003-all-time-heatmap.md)

@@ -55,6 +55,12 @@ extension DashboardView {
                 historyTotal(tokens: tokens, cost: cost, note: note, description: description)
             }
             switch history.view {
+            case .chart where history.range == .all && settings.historyChartStyle == .heatmap:
+                append(
+                    .historyChart, state: usage.days, motionState: "heatmap", previous: previous
+                ) {
+                    UsageHeatmapView(days: usage.days, page: heatmapPage) { [weak self] in self?.heatmapPage = $0 }
+                }
             case .chart:
                 let bars = usage.buckets.map { bucket in
                     UsageChartView.Bar(

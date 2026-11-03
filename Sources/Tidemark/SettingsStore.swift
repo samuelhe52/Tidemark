@@ -54,6 +54,10 @@ final class SettingsStore {
         didSet { save(shortClaudeModelNames, DefaultsKey.shortClaudeModelNames) }
     }
 
+    var historyChartStyle: DashboardView.HistoryChartStyle {
+        didSet { save(historyChartStyle.rawValue, DefaultsKey.historyChartStyle) }
+    }
+
     // The companion's own state: saved, but never reported through `onChange`.
 
     /// Nil until the companion is first placed.
@@ -105,6 +109,9 @@ final class SettingsStore {
         self.display = display
         dockPlacement = defaults.decoded(DockPlacement.self, forKey: DefaultsKey.dockPlacement)
         historyRange = defaults.string(forKey: DefaultsKey.historyRange).flatMap(UsageHistoryRange.init) ?? .today
+        historyChartStyle =
+            defaults.string(forKey: DefaultsKey.historyChartStyle)
+            .flatMap(DashboardView.HistoryChartStyle.init) ?? .heatmap
         historyView =
             defaults.string(forKey: DefaultsKey.historyView).flatMap(DashboardView.HistoryView.init) ?? .chart
     }
