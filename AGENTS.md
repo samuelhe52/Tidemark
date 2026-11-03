@@ -12,7 +12,7 @@
   - `TidemarkAppearance`: skins and rendering. A skin never moves windows, reads credentials, or changes usage data.
   - `TidemarkData`: quota and usage sources, normalization, freshness. No AppKit or SwiftUI imports.
 - The dashboard is shared and not skinnable.
-- Read other tools' stores (`~/.cc-switch`, `~/.claude`, `~/.codex`) read-only. Never refresh, rotate, or write another tool's credentials.
+- Read other tools' stores (`~/.cc-switch`, `~/.claude`, `~/.codex`) read-only except for the authorized CC Switch managed Codex OAuth flow: with Live Usage enabled, Tidemark may renew those accounts and write rotated credentials back to `codex_oauth_auth.json`. Preserve unrelated fields and accounts, reject detectable stale generations, and never claim that Tidemark's locks coordinate with the CC Switch desktop process. Claude credentials and native Codex auth remain read-only.
 - Missing or stale quota data is shown as unknown with its age, never as full.
 
 ## Workflow
