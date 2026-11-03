@@ -11,6 +11,7 @@ import SQLite3
 /// The history scopes of the compact picker, resolved the way CC Switch's dashboard resolves them.
 public enum UsageHistoryRange: String, CaseIterable, Codable, Sendable {
     case today
+    case last24Hours = "24h"
     case sevenDays = "7d"
     case fourteenDays = "14d"
     case thirtyDays = "30d"
@@ -18,11 +19,17 @@ public enum UsageHistoryRange: String, CaseIterable, Codable, Sendable {
 
     /// `today` starts at local midnight; `7d`, `14d` and `30d` at local midnight N−1 calendar days
     /// ago (counted by calendar days, so a DST change never shifts the start); `all` at the epoch.
+    /// `last24Hours` is Tidemark's own rolling scope: it starts at the top of the hour 23 hours before
+    /// the current one, so it shows 24 whole hour buckets, the last of them still filling.
     public func interval(endingAt now: Date, calendar: Calendar) -> DateInterval {
         let midnight = calendar.startOfDay(for: now)
         let days: Int
         switch self {
         case .today: days = 1
+        case .last24Hours:
+            let hour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+            let start = calendar.date(byAdding: .hour, value: -23, to: hour) ?? hour
+            return DateInterval(start: min(start, now), end: now)
         case .sevenDays: days = 7
         case .fourteenDays: days = 14
         case .thirtyDays: days = 30
@@ -33,10 +40,10 @@ public enum UsageHistoryRange: String, CaseIterable, Codable, Sendable {
         return DateInterval(start: min(start, now), end: now)
     }
 
-    /// Chart buckets: hours for today, days for the day ranges, months for all time.
+    /// Chart buckets: hours for today and the last 24 hours, days for the day ranges, months for all time.
     public var bucketUnit: Calendar.Component {
         switch self {
-        case .today: .hour
+        case .today, .last24Hours: .hour
         case .sevenDays, .fourteenDays, .thirtyDays: .day
         case .all: .month
         }

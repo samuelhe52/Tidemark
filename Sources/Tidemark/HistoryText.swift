@@ -13,6 +13,7 @@ enum HistoryText {
     static func range(_ range: UsageHistoryRange) -> String {
         switch range {
         case .today: String(localized: "Today")
+        case .last24Hours: String(localized: "Last 24 hours")
         case .sevenDays: String(localized: "7 days")
         case .fourteenDays: String(localized: "14 days")
         case .thirtyDays: String(localized: "30 days")

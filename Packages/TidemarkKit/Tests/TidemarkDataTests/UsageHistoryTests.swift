@@ -87,6 +87,15 @@ struct UsageHistoryTests {
         #expect(today.buckets.count == 24)
         #expect(today.buckets[10].totals.totalTokens == 1020)
 
+        // The last 24 hours are 24 whole hour buckets ending with the current one: 13:00 yesterday to now.
+        let day = try read(fixture, .last24Hours).get()
+        #expect(day.interval.start == Self.now.addingTimeInterval(-23 * 3600))
+        #expect(day.apps.map(\.key) == ["codex"])
+        #expect(day.buckets.count == 24)
+        #expect(day.buckets.last?.totals.totalTokens == 0)
+        #expect(day.buckets[21].totals.totalTokens == 1020)  // 10:00 today
+        #expect(day.buckets.map(\.totals.totalTokens).reduce(0, +) == day.total.totalTokens)
+
         // All time runs by month from the first usage: September through November.
         let all = try read(fixture, .all).get()
         #expect(all.buckets.map(\.totals.totalTokens) == [10, 1159, 1030])
