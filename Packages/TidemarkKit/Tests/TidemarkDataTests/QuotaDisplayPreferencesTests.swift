@@ -39,28 +39,31 @@ struct QuotaDisplayPreferencesTests {
         ]
         var preferences = QuotaDisplayPreferences()
         preferences.accountOrder = ["y", "c", "x"]
-        #expect(preferences.summaryAccounts(in: services).map(\.id) == ["x", "c"])
+        #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["x", "c"])
         preferences.setVisible(false, accountID: "x")
-        #expect(preferences.summaryAccounts(in: services).map(\.id) == ["y", "c"])
+        #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["y", "c"])
         preferences.setVisible(false, accountID: "y")
         preferences.setVisible(false, accountID: "c")
         #expect(preferences.summaryAccounts(in: services).isEmpty)
     }
 
-    @Test func explicitSummaryNeverSilentlySubstitutesAnotherAccount() {
+    @Test func explicitSummaryChoiceAffectsOnlyItsServiceAndNeverSubstitutes() {
         let services = [
+            ServiceUsage(service: .claude, accounts: [account("claude", .claude)]),
             ServiceUsage(
                 service: .codex, accounts: [account("active", .codex, active: true), account("chosen", .codex)])
         ]
         var preferences = QuotaDisplayPreferences()
-        preferences.summaryAccountID = "chosen"
-        #expect(preferences.summaryAccounts(in: services).map(\.id) == ["chosen"])
-        preferences.summaryAccountID = "absent"
-        #expect(preferences.summaryAccounts(in: services).isEmpty)
-        preferences.summaryAccountID = "chosen"
+        preferences.summaryChoices[.codex] = .account("chosen")
+        #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["claude", "chosen"])
+        preferences.summaryChoices[.claude] = .off
+        #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["chosen"])
+        preferences.summaryChoices[.codex] = .account("absent")
+        #expect(preferences.summaryAccounts(in: services) == [QuotaSummaryEntry(service: .codex, account: nil)])
+        preferences.summaryChoices = [.claude: .account("claude"), .codex: .account("chosen")]
         preferences.setVisible(false, accountID: "chosen")
-        #expect(preferences.summaryAccountID == nil)
-        #expect(preferences.summaryAccounts(in: services).map(\.id) == ["active"])
+        #expect(preferences.summaryChoices == [.claude: .account("claude")])
+        #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["claude", "active"])
     }
 
     @Test func percentageStylesPreserveUnknownReadingsAndTheirBoundaries() {

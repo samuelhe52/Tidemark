@@ -46,7 +46,7 @@ final class SettingsStore {
         didSet {
             defaults.set(display.hiddenAccountIDs.sorted(), forKey: "hiddenDashboardAccountIDs")
             defaults.set(display.accountOrder, forKey: "dashboardAccountOrder")
-            defaults.set(display.summaryAccountID, forKey: "summaryAccountID")
+            defaults.set(Self.encode(display.summaryChoices), forKey: "compactSummaryChoices")
             defaults.set(display.percentageStyle.rawValue, forKey: "quotaPercentageStyle")
             defaults.set(display.resetTimeStyle.rawValue, forKey: "quotaResetTimeStyle")
             onChange?()
@@ -74,15 +74,47 @@ final class SettingsStore {
         var seen: Set<String> = []
         display.accountOrder = (defaults.stringArray(forKey: "dashboardAccountOrder") ?? [])
             .filter { seen.insert($0).inserted }
-        display.summaryAccountID = defaults.string(forKey: "summaryAccountID")
+        // The earlier single-account choice was never released; its service is unknown until usage loads.
+        defaults.removeObject(forKey: "summaryAccountID")
+        display.summaryChoices = Self.decode(
+            defaults.dictionary(forKey: "compactSummaryChoices") as? [String: String] ?? [:])
         display.percentageStyle =
             defaults.string(forKey: "quotaPercentageStyle")
             .flatMap(QuotaPercentageStyle.init(rawValue:)) ?? .remaining
         display.resetTimeStyle =
             defaults.string(forKey: "quotaResetTimeStyle")
             .flatMap(QuotaResetTimeStyle.init(rawValue:)) ?? .countdown
-        if let id = display.summaryAccountID, display.hiddenAccountIDs.contains(id) { display.summaryAccountID = nil }
+        display.summaryChoices = display.summaryChoices.filter { _, choice in
+            if case .account(let id) = choice { return !display.hiddenAccountIDs.contains(id) }
+            return true
+        }
         self.display = display
+    }
+
+    /// Automatic is stored as an absent key; Off as `off`; an account as `account:<id>`.
+    private static func encode(_ choices: [QuotaService: QuotaSummaryChoice]) -> [String: String] {
+        var encoded: [String: String] = [:]
+        for (service, choice) in choices {
+            switch choice {
+            case .automatic: break
+            case .off: encoded[service.rawValue] = "off"
+            case .account(let id): encoded[service.rawValue] = "account:\(id)"
+            }
+        }
+        return encoded
+    }
+
+    private static func decode(_ stored: [String: String]) -> [QuotaService: QuotaSummaryChoice] {
+        var choices: [QuotaService: QuotaSummaryChoice] = [:]
+        for (key, value) in stored {
+            guard let service = QuotaService(rawValue: key) else { continue }
+            if value == "off" {
+                choices[service] = .off
+            } else if value.hasPrefix("account:") {
+                choices[service] = .account(String(value.dropFirst("account:".count)))
+            }
+        }
+        return choices
     }
 
     func updateAccounts(_ services: [ServiceUsage]) {

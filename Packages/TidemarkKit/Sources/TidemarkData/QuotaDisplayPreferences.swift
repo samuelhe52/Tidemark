@@ -19,11 +19,25 @@ public enum QuotaResetTimeStyle: String, Codable, CaseIterable, Sendable {
     case countdown, clock
 }
 
+/// How one service is represented in the compact summary.
+public enum QuotaSummaryChoice: Hashable, Sendable {
+    case automatic
+    case account(String)
+    case off
+}
+
+/// One service's place in the compact summary; `account` is nil when the selected account is absent.
+public struct QuotaSummaryEntry: Equatable, Sendable {
+    public let service: QuotaService
+    public let account: AccountUsage?
+}
+
 /// Stable account identities and presentation choices, independent of UI and credential stores.
 public struct QuotaDisplayPreferences: Equatable, Sendable {
     public var hiddenAccountIDs: Set<String> = []
     public var accountOrder: [String] = []
-    public var summaryAccountID: String?
+    /// Services without an entry use Automatic.
+    public var summaryChoices: [QuotaService: QuotaSummaryChoice] = [:]
     public var percentageStyle: QuotaPercentageStyle = .remaining
     public var resetTimeStyle: QuotaResetTimeStyle = .countdown
 
@@ -47,20 +61,38 @@ public struct QuotaDisplayPreferences: Equatable, Sendable {
             hiddenAccountIDs.remove(accountID)
         } else {
             hiddenAccountIDs.insert(accountID)
-            if summaryAccountID == accountID { summaryAccountID = nil }
+            for (service, choice) in summaryChoices where choice == .account(accountID) {
+                summaryChoices[service] = nil
+            }
         }
     }
 
-    /// Automatic keeps one visible account per service, preferring the active account.
+    public func summaryChoice(for service: QuotaService) -> QuotaSummaryChoice {
+        summaryChoices[service] ?? .automatic
+    }
+
+    /// One entry per service that is not Off, in the order services first appear among visible accounts.
     ///
-    /// A missing explicit selection stays missing rather than silently showing another account.
-    public func summaryAccounts(in services: [ServiceUsage]) -> [AccountUsage] {
+    /// Automatic prefers the visible active account. A missing explicit selection stays missing rather than
+    /// silently showing another account.
+    public func summaryAccounts(in services: [ServiceUsage]) -> [QuotaSummaryEntry] {
         let visible = orderedAccounts(in: services, visibleOnly: true)
-        if let summaryAccountID { return visible.filter { $0.id == summaryAccountID } }
-        var seen: Set<QuotaService> = []
-        return visible.compactMap { account in
-            guard seen.insert(account.service).inserted else { return nil }
-            return visible.first { $0.service == account.service && $0.isActive } ?? account
+        var order: [QuotaService] = []
+        for account in visible where !order.contains(account.service) { order.append(account.service) }
+        for service in QuotaService.allCases where !order.contains(service) {
+            if case .account = summaryChoice(for: service) { order.append(service) }
+        }
+        return order.compactMap { service in
+            switch summaryChoice(for: service) {
+            case .off:
+                return nil
+            case .account(let id):
+                return QuotaSummaryEntry(service: service, account: visible.first { $0.id == id })
+            case .automatic:
+                let candidates = visible.filter { $0.service == service }
+                guard let first = candidates.first else { return nil }
+                return QuotaSummaryEntry(service: service, account: candidates.first(where: \.isActive) ?? first)
+            }
         }
     }
 }

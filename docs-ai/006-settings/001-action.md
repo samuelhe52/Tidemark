@@ -8,6 +8,7 @@
 | 2026-11-03 | Added native settings, shared preferences, OS-service integration, configurable interaction, global account order, and quota presentation choices. | Files below |
 | 2026-11-03 | Maintainer review: added a dashboard gear button (pinned-dashboard Command-comma was tried and dropped: the nonactivating panel would have to take and hand back key focus); removed the dashboard Live Usage footer and moved refresh age to the header; switched settings to toolbar tabs, fixed duplicated slider labels and tick marks, replaced arrow reordering with drag. Maintainer checked the settings window visually. | `DashboardView`, `CompanionController`, `SettingsView`, `SettingsStore` |
 | 2026-11-03 | Added focused Engine/Data regressions; ran package tests, app builds, isolated preferences/presentation checks, and source review. | Validation below |
+| 2026-11-03 | Maintainer review of the Accounts pane: compact summary chosen per service; account rows reorder through explicit drag and drop because `onMove` did not drag in the grouped form. | [002-summary-and-reordering.md](002-summary-and-reordering.md) |
 
 ## Outcome and current state (as of 2026-11-03)
 
@@ -25,11 +26,11 @@ Key files:
 - `Sources/Tidemark/DashboardView.swift`, `QuotaRingView.swift`, and `QuotaText.swift`: unique provider-run identities for interleaved account order; consistent percentage and reset-time presentation; unknown readings remain unknown.
 - `Packages/TidemarkKit/Tests/TidemarkEngineTests/CompanionStateTests.swift` and `Packages/TidemarkKit/Tests/TidemarkDataTests/QuotaDisplayPreferencesTests.swift`: focused behavioral regressions.
 
-The user defaults retain existing `liveUsageEnabled` and `hiddenDashboardAccountIDs` choices. History range/view and dock placement keep their existing automatic persistence. Newly discovered accounts append to the order; absent accounts' slots remain saved. Hiding a selected compact-summary account returns selection to Automatic.
+The user defaults retain existing `liveUsageEnabled` and `hiddenDashboardAccountIDs` choices. History range/view and dock placement keep their existing automatic persistence. Newly discovered accounts append to the order; absent accounts' slots remain saved. The compact summary is chosen per service (Automatic, an account, or Off), stored under `compactSummaryChoices`; hiding a selected account returns that service to Automatic.
 
 ## Deviations from plan
 
-The maintainer review changed the entry points, the dashboard footer, the settings layout, and account reordering; see the plan's amendment.
+The maintainer review changed the entry points, the dashboard footer, the settings layout, and account reordering; see the plan's amendments. The per-service summary replaced the planned single summary account.
 
 ## Validation
 
@@ -38,7 +39,9 @@ The maintainer review changed the entry points, the dashboard footer, the settin
 - `swift format lint --strict` on the touched Swift files and `git diff --check`: passed.
 - Escape in the settings window no longer unpins the background companion.
 - The maintainer checked the settings window visually. Other runtime behavior is unverified.
+- After the 002 follow-up: `make build` and `make test` (34 tests) passed; `swift format lint --strict` on touched files and `git diff --check` passed. Drag reordering and the per-service pickers are not yet checked at runtime.
 
 ## Open questions
 
 - Keyboard focus, shortcut recording and delivery, shortcut conflict feedback, login-item approval and failure behavior, the timing settings, and live dashboard updates remain unverified at runtime.
+- Drag-and-drop reordering in the Accounts pane, including the drop-target row highlight inside the grouped form, is unverified at runtime.

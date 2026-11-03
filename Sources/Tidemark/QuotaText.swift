@@ -121,14 +121,16 @@ enum QuotaText {
 
     static func summary(_ services: [ServiceUsage], preferences: QuotaDisplayPreferences, now: Date) -> String {
         guard !services.isEmpty else { return String(localized: "Reading usage…") }
-        let accounts = preferences.summaryAccounts(in: services)
-        guard !accounts.isEmpty else {
-            return preferences.summaryAccountID == nil
-                ? String(localized: "No visible accounts") : String(localized: "Selected account unavailable")
+        let entries = preferences.summaryAccounts(in: services)
+        guard !entries.isEmpty else {
+            return preferences.orderedAccounts(in: services, visibleOnly: true).isEmpty
+                ? String(localized: "No visible accounts") : String(localized: "Summary off")
         }
-        return accounts.map { account in
-            let name = shortServiceName(account.service)
-            guard let (window, remaining) = tightestWindow(account, now: now) else { return "\(name) —" }
+        return entries.map { entry in
+            let name = shortServiceName(entry.service)
+            guard let account = entry.account, let (window, remaining) = tightestWindow(account, now: now) else {
+                return "\(name) —"
+            }
             return [name, shortWindowName(window), percentageDescription(remaining, style: preferences.percentageStyle)]
                 .filter { !$0.isEmpty }.joined(separator: " ")
         }.joined(separator: "  ·  ")

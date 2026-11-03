@@ -176,22 +176,25 @@ struct UsageSettingsView: View {
 
 struct AccountsSettingsView: View {
     @Bindable var settings: SettingsStore
+    @State private var dropTargetID: String?
+
+    private var summaryServices: [QuotaService] {
+        QuotaService.allCases.filter { service in settings.accounts.contains { $0.service == service } }
+    }
 
     var body: some View {
-        SettingsPane(height: 420) {
+        SettingsPane(height: 460) {
             Section {
-                Picker("Compact summary", selection: $settings.display.summaryAccountID) {
-                    Text("Automatic").tag(String?.none)
-                    ForEach(settings.orderedAccounts.filter { !settings.display.hiddenAccountIDs.contains($0.id) }) {
-                        account in
-                        Text(accountLabel(account)).tag(Optional(account.id))
-                    }
-                    if let id = settings.display.summaryAccountID, !settings.accounts.contains(where: { $0.id == id }) {
-                        Text("Selected account unavailable").tag(Optional(id))
-                    }
+                if summaryServices.isEmpty {
+                    Text("Accounts appear after usage has been read.").foregroundStyle(.secondary)
                 }
+                ForEach(summaryServices, id: \.self) { service in
+                    summaryPicker(service)
+                }
+            } header: {
+                Text("Compact Summary")
             } footer: {
-                Text("Automatic shows one visible account per service, preferring the account currently in use.")
+                Text("Automatic shows the account currently in use. Off leaves the service out of the summary.")
             }
             Section {
                 if settings.accounts.isEmpty {
@@ -200,7 +203,6 @@ struct AccountsSettingsView: View {
                 ForEach(settings.orderedAccounts) { account in
                     row(account)
                 }
-                .onMove { settings.moveAccounts(fromOffsets: $0, toOffset: $1) }
             } header: {
                 Text("Dashboard Accounts")
             } footer: {
@@ -209,50 +211,89 @@ struct AccountsSettingsView: View {
         }
     }
 
+    private func summaryPicker(_ service: QuotaService) -> some View {
+        let choice = Binding(
+            get: { settings.display.summaryChoice(for: service) },
+            set: { settings.display.summaryChoices[service] = $0 == .automatic ? nil : $0 }
+        )
+        let accounts = settings.orderedAccounts.filter {
+            $0.service == service && !settings.display.hiddenAccountIDs.contains($0.id)
+        }
+        return Picker(QuotaText.serviceName(service), selection: choice) {
+            Text("Automatic").tag(QuotaSummaryChoice.automatic)
+            ForEach(accounts) { account in
+                Text(account.email ?? String(localized: "Signed-in account")).tag(
+                    QuotaSummaryChoice.account(account.id))
+            }
+            if case .account(let id) = choice.wrappedValue, !accounts.contains(where: { $0.id == id }) {
+                Text("Selected account unavailable").tag(QuotaSummaryChoice.account(id))
+            }
+            Divider()
+            Text("Off").tag(QuotaSummaryChoice.off)
+        }
+    }
+
     private func row(_ account: AccountUsage) -> some View {
         let ids = settings.orderedAccounts.map(\.id)
         let index = ids.firstIndex(of: account.id) ?? 0
+        let name = account.email ?? String(localized: "Signed-in account")
         return HStack(spacing: 10) {
+            // A bare checkbox: on macOS a checkbox label toggles on click, which would swallow drags.
             Toggle(
+                name,
                 isOn: Binding(
                     get: { !settings.display.hiddenAccountIDs.contains(account.id) },
                     set: { settings.setVisible($0, accountID: account.id) }
                 )
-            ) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(account.email ?? String(localized: "Signed-in account"))
-                        .lineLimit(1).truncationMode(.middle)
-                    Text(QuotaText.serviceName(account.service))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
+            )
             .toggleStyle(.checkbox)
+            .labelsHidden()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(QuotaText.serviceName(account.service))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Spacer(minLength: 8)
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
         }
         .contentShape(Rectangle())
+        .draggable(account.id) {
+            Text(name).padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first, let source = ids.firstIndex(of: dragged), source != index else {
+                return false
+            }
+            // Dropping onto a row takes that row's position, from either direction.
+            move(account: dragged, to: source < index ? index + 1 : index)
+            return true
+        } isTargeted: { targeted in
+            if targeted {
+                dropTargetID = account.id
+            } else if dropTargetID == account.id {
+                dropTargetID = nil
+            }
+        }
+        .listRowBackground(dropTargetID == account.id ? Color.accentColor.opacity(0.15) : nil)
         .contextMenu {
-            Button("Move to Top") { move(account, to: 0) }.disabled(index == 0)
-            Button("Move Up") { move(account, to: index - 1) }.disabled(index == 0)
-            Button("Move Down") { move(account, to: index + 2) }.disabled(index == ids.count - 1)
-            Button("Move to Bottom") { move(account, to: ids.count) }.disabled(index == ids.count - 1)
+            Button("Move to Top") { move(account: account.id, to: 0) }.disabled(index == 0)
+            Button("Move Up") { move(account: account.id, to: index - 1) }.disabled(index == 0)
+            Button("Move Down") { move(account: account.id, to: index + 2) }.disabled(index == ids.count - 1)
+            Button("Move to Bottom") { move(account: account.id, to: ids.count) }.disabled(index == ids.count - 1)
         }
         .accessibilityActions {
-            if index > 0 { Button("Move Up") { move(account, to: index - 1) } }
-            if index < ids.count - 1 { Button("Move Down") { move(account, to: index + 2) } }
+            if index > 0 { Button("Move Up") { move(account: account.id, to: index - 1) } }
+            if index < ids.count - 1 { Button("Move Down") { move(account: account.id, to: index + 2) } }
         }
     }
 
     /// `offset` follows `onMove` semantics: the destination index before removal.
-    private func move(_ account: AccountUsage, to offset: Int) {
-        guard let index = settings.orderedAccounts.firstIndex(where: { $0.id == account.id }) else { return }
+    private func move(account id: String, to offset: Int) {
+        guard let index = settings.orderedAccounts.firstIndex(where: { $0.id == id }) else { return }
         settings.moveAccounts(fromOffsets: IndexSet(integer: index), toOffset: offset)
-    }
-
-    private func accountLabel(_ account: AccountUsage) -> String {
-        "\(QuotaText.shortServiceName(account.service)) · \(account.email ?? String(localized: "Signed-in account"))"
     }
 }
 

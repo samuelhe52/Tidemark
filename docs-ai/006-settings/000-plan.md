@@ -31,7 +31,7 @@ Additional appearance controls, notifications, refresh frequency, skins, and oth
 - Use the system global-hotkey API with a shortcut recorder, clear/cancel support, and registration-error feedback. Registration happens only in the running app, not during validation.
 - `CompanionBehavior` in Engine controls hover expansion and bounded timing. Click-only keeps the docked glass tab until clicked. Pin, drag, menu, and leave protections remain intact.
 - `QuotaDisplayPreferences` in Data normalizes account visibility/order/summary selection and percentage conversion without UI dependencies. Dashboard section identifiers remain unique even when users interleave providers.
-- Keep account hiding available inline, synchronized with settings. Summary selection offers Automatic (current behavior over visible accounts) or one visible account. Hiding the selected account returns to Automatic; a temporarily absent selected account shows unknown.
+- Keep account hiding available inline, synchronized with settings. Summary selection is per service: Automatic (the visible account in use), one visible account of that service, or Off. Hiding the selected account returns that service to Automatic; a temporarily absent selected account shows that service as unknown.
 - Quota gauges, labels, tooltips, accessibility descriptions, and compact summary consistently use remaining/used. Clock time includes the date for resets on later days.
 
 ## Alternatives & decisions
@@ -54,3 +54,4 @@ Additional appearance controls, notifications, refresh frequency, skins, and oth
 ## Amendments
 
 - 2026-11-03, maintainer review: the dashboard gains a gear button that opens settings. Command-comma from the pinned dashboard was tried and dropped, because the nonactivating panel would have to take key focus and hand it back. The dashboard's Live Usage footer is removed, and its refresh age moves to the header. Settings uses toolbar panes, and accounts are reordered by dragging instead of with arrow buttons. The design approach above is corrected to match.
+- Updated 2026-11-03: compact summary is chosen per service, and account rows reorder through explicit drag and drop — see [002-summary-and-reordering.md](002-summary-and-reordering.md). The design approach above is corrected to match.
