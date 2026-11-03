@@ -23,6 +23,8 @@ public actor UsageService {
     private var lastLive: [String: LiveOutcome] = [:]
     /// Services whose Keychain read was refused; retried only when the user asks.
     private var keychainRefused: Set<QuotaService> = []
+    /// Codex's configured credential store, read once per refresh pass.
+    private var codexStore = CodexCredentialStore.file
     private var lastCodexAccountID: String?
     /// The native Codex sign-in's user, kept with `lastCodexAccountID` for Keychain sign-ins.
     private var lastCodexIdentity: String?
@@ -65,11 +67,11 @@ public actor UsageService {
 
     private func performRefresh(userInitiated: Bool) async -> [ServiceUsage] {
         if userInitiated { keychainRefused.removeAll() }
-        if store == nil { store = SnapshotStore(directory: environment.supportDirectory).load() }
+        if store == nil { store = SnapshotStore(url: environment.snapshotFile).load() }
         let before = store
         let claude = await claudeUsage(userInitiated: userInitiated)
         let codex = await codexUsage(userInitiated: userInitiated)
-        if let store, store != before { SnapshotStore(directory: environment.supportDirectory).save(store) }
+        if let store, store != before { SnapshotStore(url: environment.snapshotFile).save(store) }
         return [claude, codex]
     }
 
@@ -78,7 +80,7 @@ public actor UsageService {
     private func claudeUsage(userInitiated: Bool) async -> ServiceUsage {
         let file = sources.claudeFile()
         let identity = file.identity
-        let id = identity.accountUUID.map { "claude:\($0)" } ?? "claude:local"
+        let id = AccountKey.claude(identity.accountUUID)
         var candidates: [Observation] = []
         if let cache = file.cache,
             cache.accountUUID == nil || identity.accountUUID == nil || cache.accountUUID == identity.accountUUID
@@ -89,30 +91,28 @@ public actor UsageService {
         if claudeIdentity?.id != id { claudeIdentity = (id, claudeIdentity == nil ? .distantPast : environment.now()) }
         let tap = Observation(windows: sources.claudeStatusline())
         if !tap.windows.isEmpty, tap.observedAt >= claudeIdentity?.since ?? .distantPast { candidates.append(tap) }
-        var liveIssue: QuotaReadIssue?
-        if liveEnabled {
-            switch await live(.claude, accountID: id, userInitiated: userInitiated) {
-            case .observed(let observation): candidates.append(observation)
-            case .failed(let issue): liveIssue = issue
-            case nil: break
-            }
-        }
+        let reading = await live(.claude, accountID: id, userInitiated: userInitiated)
         let account = resolve(
-            id: id, service: .claude, email: identity.email, isActive: true, candidates: candidates,
-            liveIssue: liveIssue, passiveIssue: file.issue)
+            id: id, service: .claude, email: identity.email, isActive: true, candidates: candidates + reading.candidates,
+            liveIssue: reading.issue, passiveIssue: file.issue)
         return ServiceUsage(service: .claude, accounts: [account])
     }
 
     // MARK: - Codex
 
     private func codexUsage(userInitiated: Bool) async -> ServiceUsage {
+        codexStore = sources.codexCredentialStore()
         let managed = sources.managedCodexAccounts()
         await managedCredentials.retain(Set(managed.map(\.localID)))
-        let fileStore = sources.codexCredentialStore() == "file"
-        var activeID = fileStore ? sources.codexAuthAccountID() : lastCodexAccountID
-        var identity = fileStore ? sources.codexAuthUserIdentity() : lastCodexIdentity
+        var activeID = lastCodexAccountID
+        var identity = lastCodexIdentity
+        if codexStore == .file {
+            let auth = sources.codexAuthIdentity()
+            activeID = auth.accountID
+            identity = auth.userIdentity
+        }
         // Resolve Keychain identity before choosing the account gate. Never read it in passive mode.
-        if liveEnabled, !fileStore, let token = nativeCodexCredential() {
+        if liveEnabled, codexStore != .file, let token = nativeCodexCredential() {
             activeID = token.accountID
             identity = token.userIdentity
             lastCodexAccountID = token.accountID
@@ -124,12 +124,12 @@ public actor UsageService {
             identity.flatMap { user in sameWorkspace.first { $0.userIdentity == user } }
             // A known native user never matches a managed account by workspace alone.
             ?? (identity == nil && sameWorkspace.count == 1 ? sameWorkspace.first : nil)
-        var activeKey = activeManaged?.key ?? activeID.map { "codex:\($0)" } ?? "codex:local"
+        var activeKey = activeManaged?.key ?? AccountKey.codex(activeID)
 
         // Old snapshots used workspace keys. Adopt only a unique mapping with a matching email;
         // a workspace-only observation could otherwise belong to an unmanaged user of that workspace.
         for account in managed {
-            let oldKey = "codex:\(account.chatGPTAccountID)"
+            let oldKey = AccountKey.codex(account.chatGPTAccountID)
             if managed.filter({ $0.chatGPTAccountID == account.chatGPTAccountID }).count == 1,
                 store?[account.key] == nil, let old = store?[oldKey], let email = old.email,
                 email.caseInsensitiveCompare(account.email ?? "") == .orderedSame,
@@ -143,15 +143,12 @@ public actor UsageService {
         var activeCandidates: [Observation] = []
         var activeIssue: QuotaReadIssue?
         if liveEnabled {
-            switch await live(
+            let reading = await live(
                 .codex, accountID: activeKey, userInitiated: userInitiated, managed: activeManaged, nativeAllowed: true)
-            {
-            case .observed(let observation): activeCandidates.append(observation)
-            case .failed(let issue): activeIssue = issue
-            case nil: break
-            }
+            activeCandidates = reading.candidates
+            activeIssue = reading.issue
             // A native credential may be the first source to reveal the workspace.
-            if activeManaged == nil, let resolved = lastCodexAccountID { activeKey = "codex:\(resolved)" }
+            if activeManaged == nil, let resolved = lastCodexAccountID { activeKey = AccountKey.codex(resolved) }
         }
         let rollout = sources.codexRollout()
         if let observed = rollout.windows.first?.observedAt,
@@ -166,19 +163,11 @@ public actor UsageService {
                 candidates: activeCandidates, liveIssue: activeIssue, passiveIssue: rollout.issue)
         ]
         for account in managed where account.localID != activeManaged?.localID {
-            var candidates: [Observation] = []
-            var issue: QuotaReadIssue?
-            if liveEnabled {
-                switch await live(.codex, accountID: account.key, userInitiated: userInitiated, managed: account) {
-                case .observed(let observation): candidates.append(observation)
-                case .failed(let failure): issue = failure
-                case nil: break
-                }
-            }
+            let reading = await live(.codex, accountID: account.key, userInitiated: userInitiated, managed: account)
             accounts.append(
                 resolve(
                     id: account.key, service: .codex, email: account.email, isActive: false,
-                    candidates: candidates, liveIssue: issue, passiveIssue: .notObserved))
+                    candidates: reading.candidates, liveIssue: reading.issue, passiveIssue: .notObserved))
         }
         // Accounts removed while a renewal was in flight must disappear in this result too.
         let remaining = Set(sources.managedCodexAccounts().map(\.key))
@@ -213,9 +202,28 @@ public actor UsageService {
 
     // MARK: - Live requests
 
+    private static let claudeUsageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private static let codexUsageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+
     private enum LiveOutcome {
         case observed(Observation)
         case failed(QuotaReadIssue)
+    }
+
+    /// What a live attempt contributes to an account: an observation, an issue, or neither.
+    private struct LiveReading {
+        var observation: Observation?
+        var issue: QuotaReadIssue?
+
+        init(_ outcome: LiveOutcome?) {
+            switch outcome {
+            case .observed(let observation)?: self.observation = observation
+            case .failed(let issue)?: self.issue = issue
+            case nil: break
+            }
+        }
+
+        var candidates: [Observation] { observation.map { [$0] } ?? [] }
     }
 
     private enum CredentialResult {
@@ -231,19 +239,21 @@ public actor UsageService {
         var userIdentity: String?
     }
 
-    /// Sends one live request when allowed; otherwise repeats the last outcome for this account.
+    /// Sends one live request when live usage is on and the account's gate allows; otherwise
+    /// repeats the last outcome for this account.
     private func live(
         _ service: QuotaService, accountID: String, userInitiated: Bool,
         managed: LocalSources.ManagedCodexAccount? = nil, nativeAllowed: Bool = false
-    ) async -> LiveOutcome? {
+    ) async -> LiveReading {
+        guard liveEnabled else { return LiveReading(nil) }
         let now = environment.now()
         guard managed != nil || !keychainRefused.contains(service),
             gate.allows(accountID, now: now, userInitiated: userInitiated)
-        else { return lastLive[accountID] }
+        else { return LiveReading(lastLive[accountID]) }
         let (outcome, key) = await request(
             service, accountID: accountID, now: now, managed: managed, nativeAllowed: nativeAllowed)
         lastLive[key] = outcome
-        return outcome
+        return LiveReading(outcome)
     }
 
     /// Returns the outcome and the account key it was recorded under: a Codex token can name a
@@ -252,111 +262,111 @@ public actor UsageService {
         _ service: QuotaService, accountID: String, now: Date,
         managed: LocalSources.ManagedCodexAccount?, nativeAllowed: Bool
     ) async -> (LiveOutcome, String) {
-        let tokenResult: CredentialResult
+        let credential: CredentialResult
         var usedNative = false
         if let managed {
-            // A known native user never serves a managed account whose user is unknown or different.
-            if nativeAllowed, let native = nativeCodexCredential(),
-                native.accountID == managed.chatGPTAccountID,
-                native.userIdentity == managed.userIdentity,
-                native.expiry.map({ $0 > now.addingTimeInterval(60) }) ?? true,
-                rejectedNativeTokens[managed.localID] != native.value
-            {
-                tokenResult = .token(native)
+            if nativeAllowed, let native = nativeCredential(serving: managed, now: now) {
+                credential = .token(native)
                 usedNative = true
             } else {
                 do {
                     let token = try await managedCredentials.token(for: managed)
-                    tokenResult = .token(
+                    credential = .token(
                         AccessToken(value: token.value, expiry: token.expiry, accountID: token.workspace))
                 } catch {
                     let failure = error as? ManagedCredentialError ?? ManagedCredentialError(issue: .requestFailed)
-                    gate.recordFailure(accountID, now: now, retryAfter: failure.retryAfter, jitter: jitter())
-                    return (.failed(failure.issue), accountID)
+                    return fail(failure.issue, key: accountID, now: now, retryAfter: failure.retryAfter)
                 }
             }
         } else {
-            tokenResult = service == .claude ? claudeCredential() : codexCredential()
+            credential = service == .claude ? claudeCredential() : codexCredential()
         }
         guard liveEnabled else {
             await managedCredentials.clear()
             return (.failed(.requestFailed), accountID)
         }
         let token: AccessToken
-        switch tokenResult {
+        switch credential {
         case .token(let value): token = value
         case .failed(let issue):
             if issue == .accessDenied, managed == nil { keychainRefused.insert(service) }
-            gate.recordFailure(accountID, now: now, retryAfter: nil, jitter: jitter())
-            return (.failed(issue), accountID)
+            return fail(issue, key: accountID, now: now)
         }
         var key = accountID
         if service == .codex, managed == nil, let resolved = token.accountID {
             lastCodexAccountID = resolved
             lastCodexIdentity = token.userIdentity
-            key = "codex:\(resolved)"
+            key = AccountKey.codex(resolved)
         }
         if let expiry = token.expiry, expiry <= now.addingTimeInterval(60) {
-            gate.recordFailure(key, now: now, retryAfter: nil, jitter: jitter())
-            return (.failed(.credentialExpired), key)
+            return fail(.credentialExpired, key: key, now: now)
         }
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await environment.transport.data(for: Self.usageRequest(service, token: token))
+        } catch {
+            return fail(.requestFailed, key: key, now: now)
+        }
+        switch response.statusCode {
+        case 200..<300:
+            guard let observation = observation(service, data: data, token: token), !observation.windows.isEmpty
+            else { return fail(.requestFailed, key: key, now: now) }
+            gate.recordSuccess(key, now: now)
+            return (.observed(observation), key)
+        case 401, 403:
+            if let managed {
+                if usedNative {
+                    rejectedNativeTokens[managed.localID] = token.value
+                } else {
+                    await managedCredentials.invalidate(managed.localID)
+                }
+            }
+            return fail(.accessDenied, key: key, now: now)
+        case 429:
+            let retry = LiveRequestGate.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: now)
+            return fail(.rateLimited, key: key, now: now, retryAfter: retry)
+        default:
+            return fail(.requestFailed, key: key, now: now)
+        }
+    }
+
+    /// Records the failure against the account's gate.
+    private func fail(
+        _ issue: QuotaReadIssue, key: String, now: Date, retryAfter: TimeInterval? = nil
+    ) -> (LiveOutcome, String) {
+        gate.recordFailure(key, now: now, retryAfter: retryAfter, jitter: jitter())
+        return (.failed(issue), key)
+    }
+
+    private static func usageRequest(_ service: QuotaService, token: AccessToken) -> URLRequest {
         var request: URLRequest
         switch service {
         case .claude:
-            request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+            request = URLRequest(url: claudeUsageURL)
             request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
             request.setValue("Tidemark", forHTTPHeaderField: "User-Agent")
         case .codex:
-            request = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
+            request = URLRequest(url: codexUsageURL)
             if let account = token.accountID { request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id") }
             request.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
         }
         request.setValue("Bearer \(token.value)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
-        do {
-            let (data, response) = try await environment.transport.data(for: request)
-            switch response.statusCode {
-            case 200..<300:
-                let observedAt = environment.now()
-                let observation: Observation?
-                switch service {
-                case .claude:
-                    observation = QuotaParser.claudeUsage(data, observedAt: observedAt).map {
-                        Observation(windows: $0, plan: token.plan)
-                    }
-                case .codex:
-                    observation = QuotaParser.codexUsage(data, observedAt: observedAt).map {
-                        Observation(windows: $0.windows, email: $0.email, plan: $0.plan)
-                    }
-                }
-                guard let observation, !observation.windows.isEmpty else {
-                    gate.recordFailure(key, now: now, retryAfter: nil, jitter: jitter())
-                    return (.failed(.requestFailed), key)
-                }
-                gate.recordSuccess(key, now: now)
-                return (.observed(observation), key)
-            case 401, 403:
-                if let managed {
-                    if usedNative {
-                        rejectedNativeTokens[managed.localID] = token.value
-                    } else {
-                        await managedCredentials.invalidate(managed.localID)
-                    }
-                }
-                gate.recordFailure(key, now: now, retryAfter: nil, jitter: jitter())
-                return (.failed(.accessDenied), key)
-            case 429:
-                let retry = LiveRequestGate.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: now)
-                gate.recordFailure(key, now: now, retryAfter: retry, jitter: jitter())
-                return (.failed(.rateLimited), key)
-            default:
-                gate.recordFailure(key, now: now, retryAfter: nil, jitter: jitter())
-                return (.failed(.requestFailed), key)
+        return request
+    }
+
+    /// The usage answer as an observation; nil when it is not a usage object.
+    private func observation(_ service: QuotaService, data: Data, token: AccessToken) -> Observation? {
+        let observedAt = environment.now()
+        switch service {
+        case .claude:
+            return QuotaParser.claudeUsage(data, observedAt: observedAt).map { Observation(windows: $0, plan: token.plan) }
+        case .codex:
+            return QuotaParser.codexUsage(data, observedAt: observedAt).map {
+                Observation(windows: $0.windows, email: $0.email, plan: $0.plan)
             }
-        } catch {
-            gate.recordFailure(key, now: now, retryAfter: nil, jitter: jitter())
-            return (.failed(.requestFailed), key)
         }
     }
 
@@ -369,8 +379,7 @@ public actor UsageService {
             if let item = try environment.credentials.genericPassword(service: "Claude Code-credentials", account: nil)
             {
                 data = item
-            } else if let file = try? LocalSources.bounded(
-                environment.home.appending(path: ".claude/.credentials.json"), maximumBytes: 1024 * 1024)
+            } else if let file = try? LocalSources.bounded(environment.claudeCredentialsFile, maximumBytes: 1024 * 1024)
             {
                 data = file
             } else {
@@ -399,11 +408,22 @@ public actor UsageService {
         }
     }
 
+    /// The native sign-in when it may serve `managed`. A known native user never serves a managed
+    /// account whose user is unknown or different.
+    private func nativeCredential(serving managed: LocalSources.ManagedCodexAccount, now: Date) -> AccessToken? {
+        guard let native = nativeCodexCredential(),
+            native.accountID == managed.chatGPTAccountID,
+            native.userIdentity == managed.userIdentity,
+            native.expiry.map({ $0 > now.addingTimeInterval(60) }) ?? true,
+            rejectedNativeTokens[managed.localID] != native.value
+        else { return nil }
+        return native
+    }
+
     /// Codex's sign-in from the store its configuration names: `auth.json`, the Keychain, or both.
     private func codexCredential() -> CredentialResult {
-        let store = sources.codexCredentialStore()
         var data: Data?
-        if store == "keyring" || store == "auto" {
+        if codexStore.usesKeychain {
             do {
                 data = try environment.credentials.genericPassword(
                     service: "Codex Auth", account: codexKeychainAccount())
@@ -411,9 +431,8 @@ public actor UsageService {
                 return .failed(.accessDenied)
             }
         }
-        if data == nil, store != "keyring" {
-            data = try? LocalSources.bounded(
-                environment.codexHome.appending(path: "auth.json"), maximumBytes: 1024 * 1024)
+        if data == nil, codexStore.mayUseFile {
+            data = try? LocalSources.bounded(environment.codexAuthFile, maximumBytes: 1024 * 1024)
         }
         guard let data, let root = QuotaParser.object(data) else { return .failed(.signedOut) }
         guard (root["auth_mode"] as? String).map({ $0.lowercased() == "chatgpt" }) ?? true,

@@ -13,9 +13,8 @@ import Foundation
 /// Unknown fields (including credentials and conversation text) are discarded.
 enum QuotaParser {
     /// Claude windows Tidemark can name truthfully. Vendor codenames are dropped.
-    static let claudeWindowIDs: Set<String> = [
-        "five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_fable"
-    ]
+    static let claudeWindowIDs = Set(
+        [QuotaWindow.fiveHourID, QuotaWindow.sevenDayID] + QuotaWindow.claudeModels.map(QuotaWindow.weeklyID(model:)))
 
     struct ClaudeCache: Equatable {
         let accountUUID: String?
@@ -109,13 +108,8 @@ enum QuotaParser {
     }
 
     static func windowID(seconds: TimeInterval?) -> String? {
-        switch seconds {
-        case 18000: "five_hour"
-        case 604800: "seven_day"
-        case 2_592_000: "30_day"
-        case let seconds?: "window_\(Int(seconds))"
-        case nil: nil
-        }
+        guard let seconds else { return nil }
+        return QuotaWindow.namedDurations.first { $0.value == seconds }?.key ?? "window_\(Int(seconds))"
     }
 
     // MARK: - Shared
@@ -154,10 +148,10 @@ enum QuotaParser {
                 scope["surface"] == nil || scope["surface"] is NSNull,
                 let model = scope["model"] as? [String: Any],
                 let name = model["display_name"] as? String,
-                ["opus", "sonnet", "fable"].contains(name.lowercased()),
+                QuotaWindow.claudeModels.contains(name.lowercased()),
                 let percent = number(row["percent"]), (0...100).contains(percent)
             else { continue }
-            let id = "seven_day_\(name.lowercased())"
+            let id = QuotaWindow.weeklyID(model: name.lowercased())
             windows[id] = claudeWindow(
                 id: id, used: percent, resetValue: row["resets_at"], observedAt: observedAt, source: source)
         }
@@ -169,7 +163,8 @@ enum QuotaParser {
     ) -> QuotaWindow {
         QuotaWindow(
             id: id, usedPercent: used, resetsAt: reset(resetValue),
-            duration: id == "five_hour" ? 18000 : 604800, observedAt: observedAt, source: source)
+            duration: QuotaWindow.namedDurations[id] ?? QuotaWindow.namedDurations[QuotaWindow.sevenDayID],
+            observedAt: observedAt, source: source)
     }
 
     static func object(_ data: Data) -> [String: Any]? {
@@ -207,4 +202,9 @@ enum QuotaParser {
         let trimmed = string[..<dot] + "." + digits.prefix(3) + string[digits.endIndex...]
         return fractional.date(from: String(trimmed))
     }
+}
+
+extension Optional where Wrapped == String {
+    /// Nil for an absent or empty string.
+    var nonEmpty: String? { self.flatMap { $0.isEmpty ? nil : $0 } }
 }

@@ -10,14 +10,14 @@ import AppKit
 /// Token usage over time as bars. Hovering a bar shows its figures in the readout line; otherwise
 /// the readout names the busiest bar.
 final class UsageChartView: NSStackView {
-    struct Bar {
+    struct Bar: Hashable {
         let value: Int
         let label: String
         let detail: String
     }
 
     private let bars: [Bar]
-    private let readout = CompanionLabel(labelWithString: "")
+    private let readout = CompanionLabel("", size: 10, color: .secondaryLabelColor, monospacedDigits: true)
     private let idleText: String
 
     init(bars: [Bar], leading: String, trailing: String, range: String) {
@@ -33,8 +33,6 @@ final class UsageChartView: NSStackView {
         alignment = .leading
         spacing = 4
 
-        readout.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        readout.textColor = .secondaryLabelColor
         readout.lineBreakMode = .byTruncatingTail
         readout.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         readout.stringValue = idleText
@@ -68,10 +66,7 @@ final class UsageChartView: NSStackView {
     }
 
     private static func axisLabel(_ text: String) -> NSTextField {
-        let label = CompanionLabel(labelWithString: text)
-        label.font = .systemFont(ofSize: 9)
-        label.textColor = .tertiaryLabelColor
-        return label
+        CompanionLabel(text, size: 9, color: .tertiaryLabelColor)
     }
 }
 

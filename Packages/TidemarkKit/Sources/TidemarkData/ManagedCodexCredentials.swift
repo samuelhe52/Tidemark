@@ -49,7 +49,7 @@ actor ManagedCodexCredentials {
     private var cache: [String: Cached] = [:]
     /// Keep an unsaved rotation in memory so a transient write failure never replays its spent token.
     private var pending: [String: Rotation] = [:]
-    private var url: URL { environment.ccSwitchHome.appending(path: "codex_oauth_auth.json") }
+    private var url: URL { environment.ccSwitchOAuthStore }
 
     init(
         environment: UsageEnvironment,
@@ -147,8 +147,8 @@ actor ManagedCodexCredentials {
             let token = ManagedCodexToken(value: value, expiry: expiry, workspace: account.chatGPTAccountID)
             let rotation = Rotation(
                 before: generation,
-                refresh: (body["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 },
-                idToken: (body["id_token"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                refresh: (body["refresh_token"] as? String).nonEmpty,
+                idToken: (body["id_token"] as? String).nonEmpty,
                 updated: (now.timeIntervalSince1970 * 1000).rounded(.down), token: token)
             pending[account.localID] = rotation
             let committed = try commit(rotation, for: account)
@@ -215,7 +215,7 @@ actor ManagedCodexCredentials {
         do {
             try FileManager.default.createDirectory(at: environment.supportDirectory, withIntermediateDirectories: true)
         } catch { throw ManagedCredentialError(issue: .credentialSaveFailed) }
-        let path = environment.supportDirectory.appending(path: "managed-codex-renewal.lock").path
+        let path = environment.renewalLockFile.path
         let descriptor = open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw ManagedCredentialError(issue: .credentialSaveFailed) }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {

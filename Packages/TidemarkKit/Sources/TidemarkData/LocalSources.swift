@@ -25,7 +25,7 @@ struct LocalSources {
 
     /// `~/.claude.json`: the signed-in account and Claude Code's own usage cache.
     func claudeFile() -> ClaudeFile {
-        let url = environment.home.appending(path: ".claude.json")
+        let url = environment.claudeStateFile
         guard FileManager.default.fileExists(atPath: url.path) else { return ClaudeFile(issue: .missing) }
         guard let data = try? Self.bounded(url, maximumBytes: 8 * 1024 * 1024) else {
             return ClaudeFile(issue: .unreadable)
@@ -42,15 +42,14 @@ struct LocalSources {
 
     /// The optional statusline tap, which reports what the running Claude Code last learned.
     func claudeStatusline() -> [QuotaWindow] {
-        let url = environment.supportDirectory.appending(path: "claude-rate-limits.json")
-        guard let data = try? Self.bounded(url, maximumBytes: 1024 * 1024) else { return [] }
+        guard let data = try? Self.bounded(environment.claudeStatuslineFile, maximumBytes: 1024 * 1024) else { return [] }
         return QuotaParser.claudeStatusline(data)
     }
 
     /// Newest `token_count.rate_limits` in the newest rollout, from a bounded tail only.
     func codexRollout() -> (windows: [QuotaWindow], issue: QuotaReadIssue?) {
         let manager = FileManager.default
-        let sessions = environment.codexHome.appending(path: "sessions")
+        let sessions = environment.codexSessionsDirectory
         guard manager.fileExists(atPath: sessions.path) else { return ([], .missing) }
         let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
         guard
@@ -91,27 +90,38 @@ struct LocalSources {
     /// When `auth.json` last changed: CC Switch rewrites it when it switches accounts, so a rollout
     /// event older than this may belong to the previous account. Metadata only.
     func codexAuthModified() -> Date? {
-        let url = environment.codexHome.appending(path: "auth.json")
-        return try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        try? environment.codexAuthFile.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 
-    /// The ChatGPT account `auth.json` is signed in with. Only `tokens.account_id` is decoded.
-    func codexAuthAccountID() -> String? {
+    struct CodexAuthIdentity: Equatable {
+        /// The ChatGPT workspace `auth.json` is signed in with.
+        var accountID: String?
+        /// The signed-in user, from the ID token's claims.
+        var userIdentity: String?
+    }
+
+    /// Who `auth.json` is signed in as. Only `tokens.account_id` and `tokens.id_token` are decoded,
+    /// and the ID token only for its identity claims.
+    func codexAuthIdentity() -> CodexAuthIdentity {
         struct Auth: Decodable {
-            struct Tokens: Decodable { let account_id: String? }
+            struct Tokens: Decodable {
+                let account_id: String?
+                let id_token: String?
+            }
             let tokens: Tokens?
         }
-        let url = environment.codexHome.appending(path: "auth.json")
-        guard let data = try? Self.bounded(url, maximumBytes: 1024 * 1024) else { return nil }
-        return (try? JSONDecoder().decode(Auth.self, from: data))?.tokens?.account_id.flatMap { $0.isEmpty ? nil : $0 }
+        guard let data = try? Self.bounded(environment.codexAuthFile, maximumBytes: 1024 * 1024),
+            let tokens = (try? JSONDecoder().decode(Auth.self, from: data))?.tokens
+        else { return CodexAuthIdentity() }
+        return CodexAuthIdentity(
+            accountID: tokens.account_id.nonEmpty, userIdentity: tokens.id_token.flatMap(QuotaParser.tokenIdentity))
     }
 
-    /// Codex's configured credential store: `file` (the default), `keyring` or `auto`.
-    func codexCredentialStore() -> String {
-        let url = environment.codexHome.appending(path: "config.toml")
-        guard let data = try? Self.bounded(url, maximumBytes: 1024 * 1024),
+    /// Codex's configured `cli_auth_credentials_store`.
+    func codexCredentialStore() -> CodexCredentialStore {
+        guard let data = try? Self.bounded(environment.codexConfigFile, maximumBytes: 1024 * 1024),
             let text = String(data: data, encoding: .utf8)
-        else { return "file" }
+        else { return .file }
         for line in text.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("[") { break }  // Only top-level keys apply.
@@ -120,9 +130,9 @@ struct LocalSources {
                 parts[0].trimmingCharacters(in: .whitespaces) == "cli_auth_credentials_store"
             else { continue }
             let value = parts[1].split(separator: "#").first ?? ""
-            return value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\"'"))
+            return CodexCredentialStore(value.trimmingCharacters(in: CharacterSet(charactersIn: " \t\"'")))
         }
-        return "file"
+        return .file
     }
 
     struct ManagedCodexAccount: Equatable, Sendable {
@@ -131,7 +141,7 @@ struct LocalSources {
         let email: String?
         let userIdentity: String?
 
-        var key: String { "codex:managed:\(localID)" }
+        var key: String { AccountKey.managedCodex(localID) }
     }
 
     /// CC Switch's managed Codex account identities.
@@ -144,10 +154,9 @@ struct LocalSources {
             }
             let accounts: [String: Account]?
         }
-        let url = environment.ccSwitchHome.appending(path: "codex_oauth_auth.json")
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        guard let data = try? Self.bounded(url, maximumBytes: 4 * 1024 * 1024),
+        guard let data = try? Self.bounded(environment.ccSwitchOAuthStore, maximumBytes: 4 * 1024 * 1024),
             let store = try? decoder.decode(Store.self, from: data)
         else { return [] }
         return (store.accounts ?? [:]).compactMap { localID, account in
@@ -158,23 +167,10 @@ struct LocalSources {
         }.sorted { $0.localID < $1.localID }
     }
 
-    func codexAuthUserIdentity() -> String? {
-        struct Auth: Decodable {
-            struct Tokens: Decodable { let idToken: String? }
-            let tokens: Tokens?
-        }
-        let url = environment.codexHome.appending(path: "auth.json")
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        guard let data = try? Self.bounded(url, maximumBytes: 1024 * 1024) else { return nil }
-        return (try? decoder.decode(Auth.self, from: data))?.tokens?.idToken.flatMap(QuotaParser.tokenIdentity)
-    }
-
     /// The account CC Switch last made live for Codex, from its identity marker (no secrets).
     func managedLiveCodexAccountID() -> String? {
         struct Marker: Decodable { let chatgpt_account_id: String? }
-        let url = environment.ccSwitchHome.appending(path: "codex_managed_oauth_live_auth.json")
-        guard let data = try? Self.bounded(url, maximumBytes: 64 * 1024) else { return nil }
+        guard let data = try? Self.bounded(environment.ccSwitchLiveCodexMarker, maximumBytes: 64 * 1024) else { return nil }
         return (try? JSONDecoder().decode(Marker.self, from: data))?.chatgpt_account_id
     }
 
@@ -185,4 +181,28 @@ struct LocalSources {
         guard data.count <= maximumBytes else { throw CocoaError(.fileReadTooLarge) }
         return data
     }
+}
+
+/// Where Codex keeps its sign-in, from `cli_auth_credentials_store` in `config.toml`.
+enum CodexCredentialStore: Equatable {
+    /// `auth.json`, the default.
+    case file
+    /// The login Keychain only.
+    case keyring
+    /// The Keychain, falling back to `auth.json`.
+    case auto
+    /// A value Tidemark does not know: no Keychain read, and `auth.json` only as a fallback.
+    case other(String)
+
+    init(_ value: String) {
+        switch value {
+        case "file": self = .file
+        case "keyring": self = .keyring
+        case "auto": self = .auto
+        default: self = .other(value)
+        }
+    }
+
+    var usesKeychain: Bool { self == .keyring || self == .auto }
+    var mayUseFile: Bool { self != .keyring }
 }

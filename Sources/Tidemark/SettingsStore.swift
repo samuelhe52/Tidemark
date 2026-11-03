@@ -16,42 +16,44 @@ import TidemarkEngine
 @Observable @MainActor
 final class SettingsStore {
     private let defaults: UserDefaults
+    /// Runs after a setting that changes behavior or display; not for state the companion saves itself.
     var onChange: (() -> Void)?
 
     var liveUsageEnabled: Bool {
-        didSet {
-            defaults.set(liveUsageEnabled, forKey: "liveUsageEnabled")
-            onChange?()
-        }
+        didSet { save(liveUsageEnabled, DefaultsKey.liveUsageEnabled) }
     }
     var hoverToExpand: Bool {
-        didSet {
-            defaults.set(hoverToExpand, forKey: "hoverToExpand")
-            onChange?()
-        }
+        didSet { save(hoverToExpand, DefaultsKey.hoverToExpand) }
     }
     var expansionDelay: Double {
-        didSet {
-            defaults.set(expansionDelay, forKey: "expansionDelay")
-            onChange?()
-        }
+        didSet { save(expansionDelay, DefaultsKey.expansionDelay) }
     }
     var retractionDelay: Double {
-        didSet {
-            defaults.set(retractionDelay, forKey: "retractionDelay")
-            onChange?()
-        }
+        didSet { save(retractionDelay, DefaultsKey.retractionDelay) }
     }
     var display: QuotaDisplayPreferences {
         didSet {
-            defaults.set(display.hiddenAccountIDs.sorted(), forKey: "hiddenDashboardAccountIDs")
-            defaults.set(display.accountOrder, forKey: "dashboardAccountOrder")
-            defaults.set(Self.encode(display.summaryChoices), forKey: "compactSummaryChoices")
-            defaults.set(display.percentageStyle.rawValue, forKey: "quotaPercentageStyle")
-            defaults.set(display.resetTimeStyle.rawValue, forKey: "quotaResetTimeStyle")
-            onChange?()
+            defaults.set(display.hiddenAccountIDs.sorted(), forKey: DefaultsKey.hiddenAccountIDs)
+            defaults.set(display.accountOrder, forKey: DefaultsKey.accountOrder)
+            defaults.set(display.storedSummaryChoices, forKey: DefaultsKey.summaryChoices)
+            defaults.set(display.percentageStyle.rawValue, forKey: DefaultsKey.percentageStyle)
+            save(display.resetTimeStyle.rawValue, DefaultsKey.resetTimeStyle)
         }
     }
+
+    // The companion's own state: saved, but never reported through `onChange`.
+
+    /// Nil until the companion is first placed.
+    @ObservationIgnored var dockPlacement: DockPlacement? {
+        didSet { defaults.setEncoded(dockPlacement, forKey: DefaultsKey.dockPlacement) }
+    }
+    @ObservationIgnored var historyRange: UsageHistoryRange {
+        didSet { defaults.set(historyRange.rawValue, forKey: DefaultsKey.historyRange) }
+    }
+    @ObservationIgnored var historyView: DashboardView.HistoryView {
+        didSet { defaults.set(historyView.rawValue, forKey: DefaultsKey.historyView) }
+    }
+
     private var services: [ServiceUsage] = []
     var accounts: [AccountUsage] { services.flatMap(\.accounts) }
 
@@ -62,59 +64,37 @@ final class SettingsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        liveUsageEnabled = defaults.bool(forKey: "liveUsageEnabled")
-        hoverToExpand = defaults.object(forKey: "hoverToExpand") as? Bool ?? true
+        liveUsageEnabled = defaults.bool(forKey: DefaultsKey.liveUsageEnabled)
+        hoverToExpand = defaults.object(forKey: DefaultsKey.hoverToExpand) as? Bool ?? true
         let normalized = CompanionBehavior(
-            expansionDelay: defaults.object(forKey: "expansionDelay") as? Double ?? 0.6,
-            retractionDelay: defaults.object(forKey: "retractionDelay") as? Double ?? 0.4)
+            expansionDelay: defaults.object(forKey: DefaultsKey.expansionDelay) as? Double ?? 0.6,
+            retractionDelay: defaults.object(forKey: DefaultsKey.retractionDelay) as? Double ?? 0.4)
         expansionDelay = normalized.expansionDelay
         retractionDelay = normalized.retractionDelay
         var display = QuotaDisplayPreferences()
-        display.hiddenAccountIDs = Set(defaults.stringArray(forKey: "hiddenDashboardAccountIDs") ?? [])
-        var seen: Set<String> = []
-        display.accountOrder = (defaults.stringArray(forKey: "dashboardAccountOrder") ?? [])
-            .filter { seen.insert($0).inserted }
+        display.hiddenAccountIDs = Set(defaults.stringArray(forKey: DefaultsKey.hiddenAccountIDs) ?? [])
+        display.accountOrder = defaults.stringArray(forKey: DefaultsKey.accountOrder) ?? []
         // The earlier single-account choice was never released; its service is unknown until usage loads.
-        defaults.removeObject(forKey: "summaryAccountID")
-        display.summaryChoices = Self.decode(
-            defaults.dictionary(forKey: "compactSummaryChoices") as? [String: String] ?? [:])
+        defaults.removeObject(forKey: DefaultsKey.legacySummaryAccountID)
+        display.storedSummaryChoices = defaults.dictionary(forKey: DefaultsKey.summaryChoices) as? [String: String] ?? [:]
         display.percentageStyle =
-            defaults.string(forKey: "quotaPercentageStyle")
+            defaults.string(forKey: DefaultsKey.percentageStyle)
             .flatMap(QuotaPercentageStyle.init(rawValue:)) ?? .remaining
         display.resetTimeStyle =
-            defaults.string(forKey: "quotaResetTimeStyle")
+            defaults.string(forKey: DefaultsKey.resetTimeStyle)
             .flatMap(QuotaResetTimeStyle.init(rawValue:)) ?? .countdown
-        display.summaryChoices = display.summaryChoices.filter { _, choice in
-            if case .account(let id) = choice { return !display.hiddenAccountIDs.contains(id) }
-            return true
-        }
+        display.normalize()
         self.display = display
+        dockPlacement = defaults.decoded(DockPlacement.self, forKey: DefaultsKey.dockPlacement)
+        historyRange = defaults.string(forKey: DefaultsKey.historyRange).flatMap(UsageHistoryRange.init) ?? .today
+        historyView =
+            defaults.string(forKey: DefaultsKey.historyView).flatMap(DashboardView.HistoryView.init) ?? .chart
     }
 
-    /// Automatic is stored as an absent key; Off as `off`; an account as `account:<id>`.
-    private static func encode(_ choices: [QuotaService: QuotaSummaryChoice]) -> [String: String] {
-        var encoded: [String: String] = [:]
-        for (service, choice) in choices {
-            switch choice {
-            case .automatic: break
-            case .off: encoded[service.rawValue] = "off"
-            case .account(let id): encoded[service.rawValue] = "account:\(id)"
-            }
-        }
-        return encoded
-    }
-
-    private static func decode(_ stored: [String: String]) -> [QuotaService: QuotaSummaryChoice] {
-        var choices: [QuotaService: QuotaSummaryChoice] = [:]
-        for (key, value) in stored {
-            guard let service = QuotaService(rawValue: key) else { continue }
-            if value == "off" {
-                choices[service] = .off
-            } else if value.hasPrefix("account:") {
-                choices[service] = .account(String(value.dropFirst("account:".count)))
-            }
-        }
-        return choices
+    /// Saves a behavior or display setting and reports the change.
+    private func save(_ value: Any, _ key: String) {
+        defaults.set(value, forKey: key)
+        onChange?()
     }
 
     func updateAccounts(_ services: [ServiceUsage]) {

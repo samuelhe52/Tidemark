@@ -121,7 +121,7 @@ final class CompanionStageView: NSView {
             if !animated {
                 curve = nil
             } else if reduced {
-                curve = MotionCurve(response: 0.3, bounce: 0)
+                curve = .reduced
             } else if visible {
                 curve = .expand
                 if element == .summary, wasDocked { delay = 0.08 }
@@ -252,9 +252,7 @@ final class SummaryView: NSView {
     }
 
     private static func label(_ value: String) -> CompanionLabel {
-        let label = CompanionLabel(labelWithString: value)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = .labelColor
+        let label = CompanionLabel(value, size: 12, weight: .medium)
         label.alignment = .center
         label.wantsLayer = true
         return label

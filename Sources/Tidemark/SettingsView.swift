@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import Observation
 import ServiceManagement
 import SwiftUI
@@ -224,7 +225,7 @@ struct AccountsSettingsView: View {
         return Picker(QuotaText.serviceName(service), selection: choice) {
             Text("Automatic").tag(QuotaSummaryChoice.automatic)
             ForEach(accounts) { account in
-                Text(account.email ?? String(localized: "Signed-in account")).tag(
+                Text(QuotaText.accountName(account)).tag(
                     QuotaSummaryChoice.account(account.id))
             }
             if case .account(let id) = choice.wrappedValue, !accounts.contains(where: { $0.id == id }) {
@@ -238,7 +239,7 @@ struct AccountsSettingsView: View {
     private func row(_ account: AccountUsage) -> some View {
         let ids = settings.orderedAccounts.map(\.id)
         let index = ids.firstIndex(of: account.id) ?? 0
-        let name = account.email ?? String(localized: "Signed-in account")
+        let name = QuotaText.accountName(account)
         return HStack(spacing: 10) {
             // A bare checkbox: on macOS a checkbox label toggles on click, which would swallow drags.
             Toggle(
@@ -361,11 +362,11 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private func capture(_ event: NSEvent) {
-        if event.keyCode == 53 {
+        if Int(event.keyCode) == kVK_Escape {
             shortcut.cancelRecording()
             return
         }
-        if [51, 117].contains(event.keyCode),
+        if [kVK_Delete, kVK_ForwardDelete].contains(Int(event.keyCode)),
             event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         {
             _ = shortcut.setShortcut(nil)

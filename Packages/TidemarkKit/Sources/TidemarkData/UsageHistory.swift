@@ -133,7 +133,7 @@ public struct UsageHistoryReader: Sendable {
     private let database: URL
 
     public init(environment: UsageEnvironment) {
-        database = environment.ccSwitchHome.appending(path: "cc-switch.db")
+        database = environment.ccSwitchDatabase
     }
 
     /// One grouped row: a detail quarter-hour or a rollup day, for one app and model.

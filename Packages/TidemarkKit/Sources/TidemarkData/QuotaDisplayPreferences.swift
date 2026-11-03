@@ -24,6 +24,26 @@ public enum QuotaSummaryChoice: Hashable, Sendable {
     case automatic
     case account(String)
     case off
+
+    /// The stored form: nil for Automatic, which is stored as an absent key; `off`; or `account:<id>`.
+    public var storedValue: String? {
+        switch self {
+        case .automatic: nil
+        case .off: "off"
+        case .account(let id): "account:\(id)"
+        }
+    }
+
+    /// Nil for a value that is not a stored choice.
+    public init?(storedValue: String) {
+        if storedValue == "off" {
+            self = .off
+        } else if storedValue.hasPrefix("account:") {
+            self = .account(String(storedValue.dropFirst("account:".count)))
+        } else {
+            return nil
+        }
+    }
 }
 
 /// One service's place in the compact summary; `account` is nil when the selected account is absent.
@@ -42,6 +62,37 @@ public struct QuotaDisplayPreferences: Equatable, Sendable {
     public var resetTimeStyle: QuotaResetTimeStyle = .countdown
 
     public init() {}
+
+    /// `summaryChoices` as stored: service raw values to `QuotaSummaryChoice.storedValue`. Unknown
+    /// services and values are dropped.
+    public var storedSummaryChoices: [String: String] {
+        get {
+            Dictionary(
+                uniqueKeysWithValues: summaryChoices.compactMap { service, choice in
+                    choice.storedValue.map { (service.rawValue, $0) }
+                })
+        }
+        set {
+            summaryChoices = Dictionary(
+                uniqueKeysWithValues: newValue.compactMap { key, value in
+                    guard let service = QuotaService(rawValue: key),
+                        let choice = QuotaSummaryChoice(storedValue: value)
+                    else { return nil }
+                    return (service, choice)
+                })
+        }
+    }
+
+    /// Repairs stored preferences: drops duplicate order entries, keeping the first, and summary
+    /// choices that select a hidden account.
+    public mutating func normalize() {
+        var seen: Set<String> = []
+        accountOrder = accountOrder.filter { seen.insert($0).inserted }
+        summaryChoices = summaryChoices.filter { _, choice in
+            if case .account(let id) = choice { return !hiddenAccountIDs.contains(id) }
+            return true
+        }
+    }
 
     public func orderedAccounts(in services: [ServiceUsage], visibleOnly: Bool = false) -> [AccountUsage] {
         let accounts = services.flatMap(\.accounts)

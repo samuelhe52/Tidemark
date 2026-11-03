@@ -16,6 +16,18 @@ final class CompanionLabel: NSTextField {
     private static let secondaryText = controlTextColor(alpha: 0.7)
     private static let tertiaryText = controlTextColor(alpha: 0.6)
 
+    /// A one-line label in the system font.
+    convenience init(
+        _ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor,
+        monospacedDigits: Bool = false
+    ) {
+        self.init(labelWithString: text)
+        font =
+            monospacedDigits
+            ? .monospacedDigitSystemFont(ofSize: size, weight: weight) : .systemFont(ofSize: size, weight: weight)
+        textColor = color
+    }
+
     override var allowsVibrancy: Bool { false }
 
     override var textColor: NSColor? {

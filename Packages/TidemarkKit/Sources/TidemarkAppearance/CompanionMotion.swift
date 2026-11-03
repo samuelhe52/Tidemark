@@ -25,6 +25,12 @@ public struct MotionCurve: Equatable, Sendable {
     public static let retract = MotionCurve(response: 0.26, bounce: 0)
     /// A released orb springs to its resting spot beside the edge.
     public static let settle = MotionCurve(response: 0.38, bounce: 0.18)
+    /// A short, bounceless move for Reduce Motion.
+    public static let reduced = MotionCurve(response: 0.3, bounce: 0)
+
+    /// How long opacity takes alongside this spring. Opacity never springs: overshooting a fade
+    /// reads as a flicker.
+    public var fadeDuration: CFTimeInterval { min(response * 0.55, 0.22) }
 }
 
 /// The two animatable properties of a companion layer. Both are composited by the render server.
@@ -97,11 +103,10 @@ extension CALayer {
             removeAnimation(forKey: "pose.transform")
         }
         if fromOpacity != pose.opacity {
-            // Opacity never springs: overshooting a fade reads as a flicker.
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = fromOpacity
             fade.toValue = pose.opacity
-            fade.duration = min(curve.response * 0.55, 0.22)
+            fade.duration = curve.fadeDuration
             fade.timingFunction = CAMediaTimingFunction(name: pose.opacity > fromOpacity ? .easeOut : .easeIn)
             fade.beginTime = begin
             fade.fillMode = .backwards

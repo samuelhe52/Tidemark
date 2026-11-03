@@ -15,6 +15,12 @@ struct CompanionLayout {
     /// The docked tab: how far it shows from the edge, and how long it runs along it.
     static let dockDepth: CGFloat = 8
     static let dockLength: CGFloat = 48
+    /// From the screen edge to the revealed orb.
+    static let orbInset: CGFloat = 12
+    /// Between the orb and the summary or dashboard.
+    static let contentGap: CGFloat = 12
+    /// The least clearance between content and the screen's visible frame.
+    static let screenMargin: CGFloat = 8
 
     let edge: DockEdge
     let screen: CGRect
@@ -27,13 +33,13 @@ struct CompanionLayout {
     let dock: CGRect
     let corridor: CGRect
 
-    /// The tallest dashboard that fits beside the orb. On the top and bottom edges the orb takes
-    /// `orbDiameter + 12` from the edge and the gap another 12; taller would be clamped onto the orb.
+    /// The tallest dashboard that fits beside the orb. On the top and bottom edges the orb and its
+    /// gaps take `orbInset + orbDiameter + contentGap` from the edge; taller would be clamped onto the orb.
     static func dashboardMaxHeight(for anchor: DockAnchor) -> CGFloat {
-        let height = anchor.visibleFrame.height - 16
+        let height = anchor.visibleFrame.height - screenMargin * 2
         switch anchor.placement.edge {
         case .left, .right: return height
-        case .top, .bottom: return height - (orbDiameter + 12 + 12)
+        case .top, .bottom: return height - (orbInset + orbDiameter + contentGap)
         }
     }
 
@@ -44,7 +50,7 @@ struct CompanionLayout {
         self.screen = screen
         let radius = Self.orbDiameter / 2
         var center = anchor.point
-        let inset = radius + 12
+        let inset = radius + Self.orbInset
         switch edge {
         case .left: center.x += inset
         case .right: center.x -= inset
@@ -56,13 +62,14 @@ struct CompanionLayout {
             x: center.x - radius, y: center.y - radius, width: Self.orbDiameter, height: Self.orbDiameter)
         self.orb = orb
 
-        let gap: CGFloat = 12
+        let gap = Self.contentGap
+        let margin = Self.screenMargin
         func clamped(_ rect: CGRect) -> CGRect {
             var rect = rect
-            rect.size.width = min(rect.width, screen.width - 16)
-            rect.size.height = min(rect.height, screen.height - 16)
-            rect.origin.x = min(max(screen.minX + 8, rect.minX), screen.maxX - rect.width - 8)
-            rect.origin.y = min(max(screen.minY + 8, rect.minY), screen.maxY - rect.height - 8)
+            rect.size.width = min(rect.width, screen.width - margin * 2)
+            rect.size.height = min(rect.height, screen.height - margin * 2)
+            rect.origin.x = min(max(screen.minX + margin, rect.minX), screen.maxX - rect.width - margin)
+            rect.origin.y = min(max(screen.minY + margin, rect.minY), screen.maxY - rect.height - margin)
             return rect
         }
         func beside(_ size: CGSize, centeredOn alongCenter: CGPoint) -> CGRect {
@@ -101,15 +108,16 @@ struct CompanionLayout {
                 x: anchor.point.x - stripLength / 2, y: edge == .bottom ? y : y - stripDepth, width: stripLength,
                 height: stripDepth)
         }
+        // An orb-wide path from the orb to the dashboard, so crossing the gap keeps it open.
         switch edge {
         case .left, .right:
             corridor = CGRect(
-                x: min(orb.midX, dashboard.midX), y: center.y - 22,
-                width: abs(orb.midX - dashboard.midX), height: 44)
+                x: min(orb.midX, dashboard.midX), y: orb.minY, width: abs(orb.midX - dashboard.midX),
+                height: Self.orbDiameter)
         case .top, .bottom:
             corridor = CGRect(
-                x: center.x - 22, y: min(orb.midY, dashboard.midY),
-                width: 44, height: abs(orb.midY - dashboard.midY))
+                x: orb.minX, y: min(orb.midY, dashboard.midY), width: Self.orbDiameter,
+                height: abs(orb.midY - dashboard.midY))
         }
         // The strip holds the dock's visible half, so the frame reaches the orb's resting shape.
         frame = orb.union(dashboard).union(summary).union(strip)

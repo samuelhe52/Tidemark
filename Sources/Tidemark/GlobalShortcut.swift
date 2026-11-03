@@ -28,15 +28,15 @@ struct KeyboardShortcut: Codable, Equatable {
             | (flags.contains(.control) ? UInt32(controlKey) : 0)
             | (flags.contains(.option) ? UInt32(optionKey) : 0)
             | (flags.contains(.shift) ? UInt32(shiftKey) : 0)
-        switch event.keyCode {
-        case 36: keyLabel = "↩"
-        case 48: keyLabel = "⇥"
-        case 49: keyLabel = String(localized: "Space")
-        case 51: keyLabel = "⌫"
-        case 123: keyLabel = "←"
-        case 124: keyLabel = "→"
-        case 125: keyLabel = "↓"
-        case 126: keyLabel = "↑"
+        switch Int(event.keyCode) {
+        case kVK_Return: keyLabel = "↩"
+        case kVK_Tab: keyLabel = "⇥"
+        case kVK_Space: keyLabel = String(localized: "Space")
+        case kVK_Delete: keyLabel = "⌫"
+        case kVK_LeftArrow: keyLabel = "←"
+        case kVK_RightArrow: keyLabel = "→"
+        case kVK_DownArrow: keyLabel = "↓"
+        case kVK_UpArrow: keyLabel = "↑"
         default:
             let functionKeys = [
                 kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
@@ -69,8 +69,7 @@ final class GlobalShortcut {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        shortcut = defaults.data(forKey: "companionKeyboardShortcut")
-            .flatMap { try? JSONDecoder().decode(KeyboardShortcut.self, from: $0) }
+        shortcut = defaults.decoded(KeyboardShortcut.self, forKey: DefaultsKey.keyboardShortcut)
     }
 
     func start() {
@@ -125,7 +124,7 @@ final class GlobalShortcut {
     func setShortcut(_ value: KeyboardShortcut?) -> Bool {
         guard register(value) else { return false }
         shortcut = value
-        defaults.set(value.flatMap { try? JSONEncoder().encode($0) }, forKey: "companionKeyboardShortcut")
+        defaults.setEncoded(value, forKey: DefaultsKey.keyboardShortcut)
         isRecording = false
         return true
     }

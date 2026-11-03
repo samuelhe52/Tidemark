@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import TidemarkData
 import TidemarkEngine
 
@@ -48,26 +49,19 @@ final class CompanionController: NSObject {
     private var presentationGeneration = 0
     private var layoutGeneration = 0
 
-    private static let historyRangeKey = "usageHistoryRange"
-    private static let historyViewKey = "usageHistoryView"
-
     init(settings: SettingsStore) {
         self.settings = settings
         appliedLiveEnabled = settings.liveUsageEnabled
         state = CompanionState(behavior: settings.behavior)
         stage = CompanionStageView(settings: settings)
         usageService = UsageService(liveEnabled: settings.liveUsageEnabled)
-        let range = UserDefaults.standard.string(forKey: Self.historyRangeKey).flatMap(UsageHistoryRange.init)
-        let view = UserDefaults.standard.string(forKey: Self.historyViewKey).flatMap(DashboardView.HistoryView.init)
-        history = DashboardView.History(range: range ?? .today, view: view ?? .chart)
+        history = DashboardView.History(range: settings.historyRange, view: settings.historyView)
         super.init()
         settings.onChange = { [weak self] in self?.settingsChanged() }
     }
 
     func start() {
-        if let data = UserDefaults.standard.data(forKey: "dockPlacement") {
-            placement = try? JSONDecoder().decode(DockPlacement.self, from: data)
-        }
+        placement = settings.dockPlacement
         stage.hiddenStripActive = { [weak self] in self?.state.phase == .hidden }
         stage.pointerChanged = { [weak self] event in
             self?.reconcilePointer(at: event.window?.convertPoint(toScreen: event.locationInWindow))
@@ -96,7 +90,7 @@ final class CompanionController: NSObject {
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .keyDown]) {
             [weak self] event in
             guard let self else { return event }
-            if event.type == .keyDown, event.keyCode == 53, self.state.phase == .pinned,
+            if event.type == .keyDown, Int(event.keyCode) == kVK_Escape, self.state.phase == .pinned,
                 NSApp.keyWindow == nil || NSApp.keyWindow === self.panel
             {
                 self.send(.escape)
@@ -109,7 +103,7 @@ final class CompanionController: NSObject {
         // Registration does not request that permission; clicking or Option-clicking the orb always
         // provides an unpin path.
         escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return }
+            guard Int(event.keyCode) == kVK_Escape else { return }
             Task { @MainActor in self?.send(.escape) }
         }
         NotificationCenter.default.addObserver(
@@ -263,7 +257,7 @@ final class CompanionController: NSObject {
 
     private func setHistoryRange(_ range: UsageHistoryRange) {
         guard range != history.range else { return }
-        UserDefaults.standard.set(range.rawValue, forKey: Self.historyRangeKey)
+        settings.historyRange = range
         history.range = range
         history.issue = nil
         // The picker already shows the new range; the rows change once its figures arrive.
@@ -272,7 +266,7 @@ final class CompanionController: NSObject {
 
     private func setHistoryView(_ view: DashboardView.HistoryView) {
         guard view != history.view else { return }
-        UserDefaults.standard.set(view.rawValue, forKey: Self.historyViewKey)
+        settings.historyView = view
         history.view = view
         renderUsage(animated: true)
     }
@@ -446,8 +440,8 @@ final class CompanionController: NSObject {
     }
 
     private func persistPlacement() {
-        guard let placement, let data = try? JSONEncoder().encode(placement) else { return }
-        UserDefaults.standard.set(data, forKey: "dockPlacement")
+        guard let placement else { return }
+        settings.dockPlacement = placement
     }
 
     private func suspend() {

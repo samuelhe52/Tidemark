@@ -19,15 +19,14 @@ final class QuotaRingView: NSView {
         self.progressValue = percentage
         super.init(frame: .zero)
 
-        let value = CompanionLabel(labelWithString: percentage.map(QuotaText.percent) ?? "—")
-        value.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        value.textColor = remaining == nil ? .secondaryLabelColor : .labelColor
+        let value = CompanionLabel(
+            percentage.map(QuotaText.percent) ?? "—", size: 11, weight: .medium,
+            color: remaining == nil ? .secondaryLabelColor : .labelColor, monospacedDigits: true)
         let unit = CompanionLabel(
-            labelWithString: remaining == nil
+            remaining == nil
                 ? String(localized: "unknown")
-                : style == .remaining ? String(localized: "left") : String(localized: "used"))
-        unit.font = .systemFont(ofSize: 8)
-        unit.textColor = .secondaryLabelColor
+                : style == .remaining ? String(localized: "left") : String(localized: "used"),
+            size: 8, color: .secondaryLabelColor)
         let labels = NSStackView(views: [value, unit])
         labels.orientation = .vertical
         labels.alignment = .centerX

@@ -66,6 +66,26 @@ struct QuotaDisplayPreferencesTests {
         #expect(preferences.summaryAccounts(in: services).map(\.account?.id) == ["claude", "active"])
     }
 
+    @Test func storedSummaryChoicesRoundTripAndDropUnknownEntries() {
+        var preferences = QuotaDisplayPreferences()
+        preferences.summaryChoices = [.claude: .off, .codex: .account("codex:managed:a")]
+        #expect(preferences.storedSummaryChoices == ["claude": "off", "codex": "account:codex:managed:a"])
+        preferences.summaryChoices[.claude] = .automatic
+        #expect(preferences.storedSummaryChoices == ["codex": "account:codex:managed:a"])
+        preferences.storedSummaryChoices = ["claude": "account:c", "codex": "bogus", "gemini": "off"]
+        #expect(preferences.summaryChoices == [.claude: .account("c")])
+    }
+
+    @Test func normalizeDropsDuplicateOrderAndChoicesForHiddenAccounts() {
+        var preferences = QuotaDisplayPreferences()
+        preferences.accountOrder = ["b", "a", "b", "c", "a"]
+        preferences.hiddenAccountIDs = ["x"]
+        preferences.summaryChoices = [.claude: .account("x"), .codex: .account("y")]
+        preferences.normalize()
+        #expect(preferences.accountOrder == ["b", "a", "c"])
+        #expect(preferences.summaryChoices == [.codex: .account("y")])
+    }
+
     @Test func percentageStylesPreserveUnknownReadingsAndTheirBoundaries() {
         let now = Date(timeIntervalSince1970: 10_000)
         for style in QuotaPercentageStyle.allCases {

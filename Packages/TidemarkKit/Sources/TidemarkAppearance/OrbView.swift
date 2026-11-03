@@ -109,8 +109,7 @@ public final class OrbView: NSView {
             completion()
             return
         }
-        // Opacity never springs: overshooting a fade reads as a flicker.
-        NSAnimationContext.animate(.easeInOut(duration: min(curve.response * 0.55, 0.22))) { applyLighting() }
+        NSAnimationContext.animate(.easeInOut(duration: curve.fadeDuration)) { applyLighting() }
         NSAnimationContext.animate(
             .spring(duration: curve.response, bounce: curve.bounce), changes: { applyShape(lighting: false) },
             completion: completion)

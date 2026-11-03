@@ -65,10 +65,12 @@ final class DashboardView: NSView {
         case historyStatus
     }
 
+    /// A row and the inputs it was built from: an equal `state` reuses the view, and a changed
+    /// `motionState` fades the row during a content transition.
     fileprivate struct ContentRow {
         let view: NSView
-        let state: [String]
-        let motionState: [String]
+        let state: AnyHashable
+        let motionState: AnyHashable
     }
 
     struct ContentTransition {
@@ -79,17 +81,22 @@ final class DashboardView: NSView {
         fileprivate let chrome: [(NSView, CGRect)]
     }
 
-    private struct WindowPresentation {
+    /// Everything a window tile shows; the tile is rebuilt only when this changes.
+    private struct WindowPresentation: Hashable {
         let name: String
         let remaining: Double?
         let percentageStyle: QuotaPercentageStyle
         let status: String
         let description: String
 
-        var state: [String] {
-            [name, remaining.map { String($0) } ?? "unknown", percentageStyle.rawValue, status, description]
+        /// What changes the tile visibly enough to fade it: not the countdown or the description.
+        struct Motion: Hashable {
+            let name: String
+            let remaining: Double?
+            let percentageStyle: QuotaPercentageStyle
         }
-        var motionState: [String] { [name, remaining.map { String($0) } ?? "unknown", percentageStyle.rawValue] }
+
+        var motion: Motion { Motion(name: name, remaining: remaining, percentageStyle: percentageStyle) }
     }
 
     init(settings: SettingsStore) {
@@ -242,7 +249,7 @@ final class DashboardView: NSView {
         for view in content.arrangedSubviews { view.removeFromSuperview() }
         if services.isEmpty {
             let text = String(localized: "Reading usage…")
-            append(.loading, state: [text], previous: previous) {
+            append(.loading, state: text, previous: previous) {
                 Self.label(text, size: 12, color: .secondaryLabelColor)
             }
         }
@@ -258,7 +265,7 @@ final class DashboardView: NSView {
         for (index, service) in sections.enumerated() {
             let sectionID = service.accounts.first?.id ?? service.service.rawValue
             if index > 0 {
-                append(.separator(sectionID), state: [], previous: previous) { Self.separator() }
+                append(.separator(sectionID), state: sectionID, previous: previous) { Self.separator() }
             }
             let accountCount = services.first { $0.service == service.service }?.accounts.count ?? 0
             appendSection(
@@ -271,7 +278,7 @@ final class DashboardView: NSView {
             }
         }
         // Local history does not wait for quota requests.
-        append(.separator("history"), state: [], previous: previous) { Self.separator() }
+        append(.separator("history"), state: "history", previous: previous) { Self.separator() }
         appendHistory(history, now: now, previous: previous)
     }
 
@@ -375,7 +382,7 @@ final class DashboardView: NSView {
     // MARK: - Content
 
     private func append(
-        _ id: RowID, state: [String], motionState: [String]? = nil,
+        _ id: RowID, state: AnyHashable, motionState: AnyHashable? = nil,
         previous: [RowID: ContentRow], makeView: () -> NSView
     ) {
         let view = previous[id].flatMap { $0.state == state ? $0.view : nil } ?? makeView()
@@ -420,8 +427,8 @@ final class DashboardView: NSView {
                 let windows = account.windows[start..<min(start + 2, account.windows.count)]
                 let presentations = windows.map { windowPresentation($0, now: now) }
                 append(
-                    .windows(account.id, windows.map(\.id)), state: presentations.flatMap(\.state),
-                    motionState: presentations.flatMap(\.motionState), previous: previous
+                    .windows(account.id, windows.map(\.id)), state: presentations,
+                    motionState: presentations.map(\.motion), previous: previous
                 ) {
                     let row = NSStackView(views: presentations.map(windowTile))
                     row.distribution = .fillEqually
@@ -433,11 +440,11 @@ final class DashboardView: NSView {
             }
             if account.windows.isEmpty, account.issue == nil {
                 let text = String(localized: "No reading yet")
-                append(.status(account.id), state: [text], previous: previous) { Self.caption(text) }
+                append(.status(account.id), state: text, previous: previous) { Self.caption(text) }
             }
             if let issue = account.issue {
                 let text = QuotaText.issue(issue, service: service.service)
-                append(.status(account.id), state: [text], previous: previous) { Self.caption(text) }
+                append(.status(account.id), state: text, previous: previous) { Self.caption(text) }
             }
         }
     }
@@ -447,7 +454,7 @@ final class DashboardView: NSView {
     private func appendHistory(_ history: History, now: Date, previous: [RowID: ContentRow]) {
         let rangeName = HistoryText.range(history.range)
         // The header outlives selection changes: rebuilding it would crossfade the control being clicked.
-        append(.historyHeader, state: [], previous: previous) {
+        append(.historyHeader, state: 0, previous: previous) {
             let controls = NSStackView(views: [historyViewPicker, historyRangePicker])
             controls.spacing = 4
             controls.alignment = .centerY
@@ -486,8 +493,7 @@ final class DashboardView: NSView {
                 let axis = (bars.first?.label ?? "", bars.last?.label ?? "")
                 append(
                     .historyChart,
-                    state: bars.flatMap { [$0.label, $0.detail, String($0.value)] } + [axis.0, axis.1, rangeName],
-                    motionState: [usage.range.rawValue], previous: previous
+                    state: [bars as AnyHashable, rangeName], motionState: usage.range, previous: previous
                 ) {
                     UsageChartView(bars: bars, leading: axis.0, trailing: axis.1, range: rangeName)
                 }
@@ -515,7 +521,7 @@ final class DashboardView: NSView {
                 String(localized: "Reading CC Switch history…")
             }
         if let status {
-            append(.historyStatus, state: [status], previous: previous) { Self.caption(status) }
+            append(.historyStatus, state: status, previous: previous) { Self.caption(status) }
         }
     }
 
@@ -581,17 +587,14 @@ final class DashboardView: NSView {
     }()
 
     private func historyTotal(tokens: String, cost: String, note: String, description: String) -> NSView {
-        let amount = Self.label(tokens, size: 20, weight: .semibold)
-        amount.font = .monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
-        let estimate = Self.label(cost, size: 13, weight: .medium, color: .secondaryLabelColor)
-        estimate.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        let amount = Self.label(tokens, size: 20, weight: .semibold, monospacedDigits: true)
+        let estimate = Self.label(
+            cost, size: 13, weight: .medium, color: .secondaryLabelColor, monospacedDigits: true)
         let stack = Self.column(spacing: 2)
         stack.addArrangedSubview(Self.row(amount, estimate))
         stack.addArrangedSubview(Self.caption(note))
         Self.fill(stack)
-        stack.toolTip = description
-        stack.setAccessibilityElement(true)
-        stack.setAccessibilityLabel(description)
+        Self.describe(stack, description)
         return stack
     }
 
@@ -600,22 +603,17 @@ final class DashboardView: NSView {
         title.lineBreakMode = .byTruncatingMiddle
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         title.toolTip = name
-        let figures = Self.label(value, size: 11, color: .secondaryLabelColor)
-        figures.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        let figures = Self.label(value, size: 11, color: .secondaryLabelColor, monospacedDigits: true)
         let stack = Self.column(spacing: 4)
         stack.addArrangedSubview(Self.row(title, figures))
         stack.addArrangedSubview(ShareBarView(share: share))
         Self.fill(stack)
-        stack.toolTip = description
-        stack.setAccessibilityElement(true)
-        stack.setAccessibilityLabel(description)
+        Self.describe(stack, description)
         return stack
     }
 
     private func accountHeader(_ account: AccountUsage) -> NSView {
-        let name = Self.label(
-            account.email ?? String(localized: "Signed-in account"), size: 11,
-            weight: account.isActive ? .medium : .regular)
+        let name = Self.label(QuotaText.accountName(account), size: 11, weight: account.isActive ? .medium : .regular)
         name.toolTip = account.email
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -640,7 +638,7 @@ final class DashboardView: NSView {
         button.bezelStyle = .accessoryBarAction
         button.contentTintColor = .tertiaryLabelColor
         button.toolTip = description
-        let name = account.email ?? String(localized: "Signed-in account")
+        let name = QuotaText.accountName(account)
         button.setAccessibilityLabel(String(localized: "Hide account \(name)"))
         button.widthAnchor.constraint(equalToConstant: 24).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -662,7 +660,7 @@ final class DashboardView: NSView {
         menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         for account in accounts {
             let name =
-                "\(QuotaText.shortServiceName(account.service)) · \(account.email ?? String(localized: "Signed-in account"))"
+                "\(QuotaText.shortServiceName(account.service)) · \(QuotaText.accountName(account))"
             let item = menu.addItem(
                 withTitle: String(localized: "Show \(name)"), action: #selector(showAccounts(_:)), keyEquivalent: "")
             item.target = self
@@ -739,22 +737,26 @@ final class DashboardView: NSView {
         stack.spacing = 8
         text.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -52).isActive = true
         text.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        stack.toolTip = presentation.description
-        stack.setAccessibilityElement(true)
-        stack.setAccessibilityLabel(presentation.description)
+        Self.describe(stack, presentation.description)
         return stack
     }
 
     // MARK: - Building blocks
 
     private static func label(
-        _ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor
+        _ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor,
+        monospacedDigits: Bool = false
     ) -> NSTextField {
-        let field = CompanionLabel(labelWithString: text)
-        field.font = .systemFont(ofSize: size, weight: weight)
-        field.textColor = color
+        let field = CompanionLabel(text, size: size, weight: weight, color: color, monospacedDigits: monospacedDigits)
         field.lineBreakMode = .byTruncatingTail
         return field
+    }
+
+    /// Gives a composite row one tooltip and one accessibility label.
+    private static func describe(_ view: NSView, _ description: String) {
+        view.toolTip = description
+        view.setAccessibilityElement(true)
+        view.setAccessibilityLabel(description)
     }
 
     private static func caption(_ text: String) -> NSTextField {

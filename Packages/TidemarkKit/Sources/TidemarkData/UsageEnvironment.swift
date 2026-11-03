@@ -45,8 +45,8 @@ public struct UsageEnvironment: Sendable {
     /// The real paths (honoring `$CODEX_HOME`), the login Keychain, and an uncached URL session.
     public static var current: UsageEnvironment {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap {
-            $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+        let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].nonEmpty.map {
+            URL(fileURLWithPath: $0, isDirectory: true)
         }
         return UsageEnvironment(
             home: home, codexHome: codexHome ?? home.appending(path: ".codex"),
@@ -54,6 +54,27 @@ public struct UsageEnvironment: Sendable {
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
             credentials: KeychainCredentialStore(), transport: URLSessionTransport.shared, now: { Date() })
     }
+}
+
+/// Every file Tidemark reads or writes. Only `ccSwitchOAuthStore` and Tidemark's own files are
+/// ever written; see the store rules in CLAUDE.md.
+extension UsageEnvironment {
+    /// Claude Code's state: the signed-in account and its usage cache.
+    var claudeStateFile: URL { home.appending(path: ".claude.json") }
+    /// Claude Code's sign-in when it is not in the Keychain.
+    var claudeCredentialsFile: URL { home.appending(path: ".claude/.credentials.json") }
+    var codexSessionsDirectory: URL { codexHome.appending(path: "sessions") }
+    var codexAuthFile: URL { codexHome.appending(path: "auth.json") }
+    var codexConfigFile: URL { codexHome.appending(path: "config.toml") }
+    /// CC Switch's managed Codex OAuth accounts; written back only with rotated credentials.
+    var ccSwitchOAuthStore: URL { ccSwitchHome.appending(path: "codex_oauth_auth.json") }
+    /// The account CC Switch last made live for Codex, without secrets.
+    var ccSwitchLiveCodexMarker: URL { ccSwitchHome.appending(path: "codex_managed_oauth_live_auth.json") }
+    var ccSwitchDatabase: URL { ccSwitchHome.appending(path: "cc-switch.db") }
+    /// The optional statusline tap.
+    var claudeStatuslineFile: URL { supportDirectory.appending(path: "claude-rate-limits.json") }
+    var snapshotFile: URL { supportDirectory.appending(path: "usage-snapshots.json") }
+    var renewalLockFile: URL { supportDirectory.appending(path: "managed-codex-renewal.lock") }
 }
 
 struct CredentialAccessError: Error {

@@ -18,8 +18,7 @@ struct StoredAccount: Codable, Equatable {
 
 /// Tidemark's own last-good copy, `usage-snapshots.json` in its Application Support directory.
 struct SnapshotStore {
-    let directory: URL
-    private var url: URL { directory.appending(path: "usage-snapshots.json") }
+    let url: URL
 
     func load() -> [String: StoredAccount] {
         guard let data = try? Data(contentsOf: url),
@@ -30,7 +29,7 @@ struct SnapshotStore {
 
     func save(_ accounts: [String: StoredAccount]) {
         guard let data = try? Self.encoder.encode(accounts) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard (try? data.write(to: url, options: .atomic)) != nil else { return }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }

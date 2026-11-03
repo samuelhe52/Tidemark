@@ -55,6 +55,31 @@ public struct QuotaWindow: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+extension QuotaWindow {
+    public static let fiveHourID = "five_hour"
+    public static let sevenDayID = "seven_day"
+    public static let thirtyDayID = "30_day"
+
+    /// Window IDs with a fixed length. Any other length is `window_<seconds>`.
+    static let namedDurations: [String: TimeInterval] = [
+        fiveHourID: 18000, sevenDayID: 604_800, thirtyDayID: 2_592_000
+    ]
+
+    /// Claude models with their own weekly window, lowercased as the vendor reports them. Adding a
+    /// model here is enough for Tidemark to read and name its window.
+    static let claudeModels = ["opus", "sonnet", "fable"]
+
+    static func weeklyID(model: String) -> String { "\(sevenDayID)_\(model)" }
+
+    /// The model a model-scoped weekly window covers, lowercased; nil for any other window.
+    public var weeklyModel: String? {
+        let prefix = "\(Self.sevenDayID)_"
+        guard id.hasPrefix(prefix) else { return nil }
+        let model = String(id.dropFirst(prefix.count))
+        return Self.claudeModels.contains(model) ? model : nil
+    }
+}
+
 public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     /// Passive file states.
     case missing, unreadable, unrecognized

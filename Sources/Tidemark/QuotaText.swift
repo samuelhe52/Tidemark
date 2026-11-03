@@ -25,13 +25,11 @@ enum QuotaText {
     }
 
     static func windowName(_ window: QuotaWindow) -> String {
-        switch window.id {
-        case "five_hour": String(localized: "5-hour")
-        case "seven_day": String(localized: "Weekly")
-        case "30_day": String(localized: "30-day")
-        case "seven_day_opus": String(localized: "Weekly · Opus")
-        case "seven_day_sonnet": String(localized: "Weekly · Sonnet")
-        case "seven_day_fable": String(localized: "Weekly · Fable")
+        if let model = window.weeklyModel { return String(localized: "Weekly · \(model.capitalized)") }
+        return switch window.id {
+        case QuotaWindow.fiveHourID: String(localized: "5-hour")
+        case QuotaWindow.sevenDayID: String(localized: "Weekly")
+        case QuotaWindow.thirtyDayID: String(localized: "30-day")
         default:
             window.duration.map { String(localized: "\(duration($0)) window") }
                 ?? window.id.replacingOccurrences(of: "_", with: " ").capitalized
@@ -41,6 +39,11 @@ enum QuotaText {
     /// "5h", "7d": the window length in one token, for the one-line summary.
     static func shortWindowName(_ window: QuotaWindow) -> String {
         window.duration.map(duration) ?? ""
+    }
+
+    /// The account's email, or a generic name when the service reported none.
+    static func accountName(_ account: AccountUsage) -> String {
+        account.email ?? String(localized: "Signed-in account")
     }
 
     static func plan(_ plan: String?) -> String? {
