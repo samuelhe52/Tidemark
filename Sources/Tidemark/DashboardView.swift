@@ -297,6 +297,7 @@ final class DashboardView: NSView {
 
     func append(
         _ id: RowID, state: AnyHashable, motionState: AnyHashable? = nil,
+        spacingAfter: CGFloat? = nil,
         previous: [RowID: ContentRow], makeView: () -> NSView
     ) {
         let view = previous[id].flatMap { $0.state == state ? $0.view : nil } ?? makeView()
@@ -304,6 +305,7 @@ final class DashboardView: NSView {
         view.translatesAutoresizingMaskIntoConstraints = false
         rows[id] = ContentRow(view: view, state: state, motionState: motionState ?? state)
         content.addArrangedSubview(view)
+        content.setCustomSpacing(spacingAfter ?? content.spacing, after: view)
         view.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
 
@@ -316,7 +318,9 @@ final class DashboardView: NSView {
         let planName = QuotaText.plan(singleVisible?.plan) ?? ""
         append(
             .service(sectionID),
-            state: [name, planName, singleVisible?.id ?? "", singleVisible?.email ?? ""], previous: previous
+            state: [name, planName, singleVisible?.id ?? "", singleVisible?.email ?? ""],
+            spacingAfter: multipleAccounts || single?.windows.isEmpty == false ? 6 : nil,
+            previous: previous
         ) {
             let title = Self.label(name, size: 13, weight: .semibold)
             let plan = Self.label(planName, size: 11, color: .secondaryLabelColor)
@@ -324,18 +328,13 @@ final class DashboardView: NSView {
             if singleVisible != nil { row.alignment = .centerY }
             return row
         }
-        if let single, !single.windows.isEmpty, let header = rows[.service(sectionID)]?.view {
-            content.setCustomSpacing(6, after: header)
-        }
         for account in service.accounts {
             if single == nil {
                 append(
                     .account(account.id), state: [account.email ?? "", account.plan ?? "", String(account.isActive)],
+                    spacingAfter: account.windows.isEmpty ? nil : 6,
                     previous: previous
                 ) { accountHeader(account) }
-                if !account.windows.isEmpty, let header = rows[.account(account.id)]?.view {
-                    content.setCustomSpacing(6, after: header)
-                }
             }
             for start in stride(from: 0, to: account.windows.count, by: 2) {
                 let windows = account.windows[start..<min(start + 2, account.windows.count)]

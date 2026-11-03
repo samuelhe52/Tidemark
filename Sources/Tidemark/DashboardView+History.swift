@@ -25,7 +25,7 @@ extension DashboardView {
     func appendHistory(_ history: History, now: Date, previous: [RowID: ContentRow]) {
         let rangeName = HistoryText.range(history.range)
         // The header outlives selection changes: rebuilding it would crossfade the control being clicked.
-        append(.historyHeader, state: 0, previous: previous) {
+        append(.historyHeader, state: 0, spacingAfter: 8, previous: previous) {
             let controls = NSStackView(views: [historyViewPicker, historyRangePicker])
             controls.spacing = 4
             controls.alignment = .centerY
@@ -49,6 +49,7 @@ extension DashboardView {
             // Reuse state covers every input of the view, including its tooltip.
             append(
                 .historyTotal, state: [tokens, cost, note, description], motionState: [tokens, cost],
+                spacingAfter: history.view == .chart ? 8 : nil,
                 previous: previous
             ) {
                 historyTotal(tokens: tokens, cost: cost, note: note, description: description)
