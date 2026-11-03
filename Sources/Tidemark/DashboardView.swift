@@ -36,21 +36,22 @@ final class DashboardView: NSView {
     private let settings: SettingsStore
     private var preferences: QuotaDisplayPreferences { settings.display }
 
-    private let surface = GlassSurfaceView(cornerRadius: CompanionLayout.dashboardCornerRadius, kind: .content)
-    private let root = NSStackView()
+    // Internal rather than private: the extensions in DashboardView+*.swift share these.
+    let surface = GlassSurfaceView(cornerRadius: CompanionLayout.dashboardCornerRadius, kind: .content)
+    let root = NSStackView()
     private let refreshButton = NSButton()
     private let settingsButton = NSButton()
     private let spinner = NSProgressIndicator()
-    private let scrollView = NSScrollView()
+    let scrollView = NSScrollView()
     private let content = NSStackView()
     private let updatedLabel = DashboardView.label("", size: 11, color: .tertiaryLabelColor)
     private var scrollHeight: NSLayoutConstraint!
-    private var rows: [RowID: ContentRow] = [:]
-    private var outgoingViews: [NSView] = []
-    private var contentGeneration = 0
-    private(set) var contentTransitionIsActive = false
+    var rows: [RowID: ContentRow] = [:]
+    var outgoingViews: [NSView] = []
+    var contentGeneration = 0
+    var contentTransitionIsActive = false
 
-    fileprivate enum RowID: Hashable {
+    enum RowID: Hashable {
         case loading
         case separator(String)
         case service(String)
@@ -67,18 +68,10 @@ final class DashboardView: NSView {
 
     /// A row and the inputs it was built from: an equal `state` reuses the view, and a changed
     /// `motionState` fades the row during a content transition.
-    fileprivate struct ContentRow {
+    struct ContentRow {
         let view: NSView
         let state: AnyHashable
         let motionState: AnyHashable
-    }
-
-    struct ContentTransition {
-        fileprivate let rows: [RowID: ContentRow]
-        fileprivate let frames: [RowID: CGRect]
-        fileprivate let surface: CGRect
-        fileprivate let viewport: CGRect
-        fileprivate let chrome: [(NSView, CGRect)]
     }
 
     /// Everything a window tile shows; the tile is rebuilt only when this changes.
@@ -107,114 +100,6 @@ final class DashboardView: NSView {
         surface.autoresizingMask = [.width, .height]
         addSubview(surface)
         buildChrome()
-    }
-
-    // MARK: - Content transitions
-
-    func prepareContentTransition() -> ContentTransition? {
-        guard window != nil, !isHidden else { return nil }
-        let viewport = scrollView.contentView.screenFrame()
-        let frames = rows.mapValues { $0.view.screenFrame() }
-        return ContentTransition(
-            rows: rows, frames: frames, surface: surface.screenFrame(), viewport: viewport,
-            chrome: root.arrangedSubviews.filter { $0 !== scrollView }.map { ($0, $0.screenFrame()) })
-    }
-
-    func cancelContentTransition() {
-        contentGeneration += 1
-        contentTransitionIsActive = false
-        for view in outgoingViews { view.removeFromSuperview() }
-        outgoingViews = []
-        let views: [NSView] = [surface] + rows.values.map(\.view) + root.arrangedSubviews
-        for view in views {
-            view.layer?.removeAnimation(forKey: ContentMotion.transformKey)
-            view.layer?.removeAnimation(forKey: ContentMotion.opacityKey)
-        }
-    }
-
-    func animateContent(from previous: ContentTransition, completion: @escaping () -> Void) {
-        guard let window else {
-            completion()
-            return
-        }
-        contentGeneration += 1
-        let generation = contentGeneration
-        contentTransitionIsActive = true
-        let reduced = ContentMotion.reducesMotion
-        let duration = ContentMotion.duration(reduced: reduced)
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        CATransaction.setCompletionBlock { [weak self] in
-            guard let self, self.contentGeneration == generation else { return }
-            self.contentTransitionIsActive = false
-            for view in self.outgoingViews { view.removeFromSuperview() }
-            self.outgoingViews = []
-            completion()
-        }
-        if !reduced { surface.animateMove(from: previous.surface, duration: duration, scales: true) }
-        for (view, frame) in previous.chrome where !reduced { view.animateMove(from: frame, duration: duration) }
-        // The viewport travels top edge to top edge with the chrome, so rows start inside its clip
-        // instead of above it when the panel shrinks; rows only make up the remaining distance.
-        let viewport = scrollView.contentView.screenFrame(model: true)
-        let shift = CGPoint(x: viewport.minX - previous.viewport.minX, y: viewport.maxY - previous.viewport.maxY)
-        if !reduced {
-            scrollView.animateMove(
-                from: scrollView.screenFrame(model: true).offsetBy(dx: -shift.x, dy: -shift.y),
-                duration: duration)
-        }
-        for (id, row) in rows {
-            if let frame = previous.frames[id], !reduced {
-                row.view.animateMove(from: frame.offsetBy(dx: shift.x, dy: shift.y), duration: duration)
-            }
-            let changed = previous.rows[id].map { $0.motionState != row.motionState } ?? true
-            if changed, let rowLayer = row.view.layer {
-                rowLayer.addContentFade(appearing: true, duration: duration)
-                if !reduced, previous.frames[id] == nil {
-                    let dy: CGFloat = row.view.superview?.isFlipped == true ? 6 : -6
-                    rowLayer.addContentSlide(from: CGPoint(x: 0, y: dy), to: .zero, duration: duration)
-                }
-            }
-        }
-        for (id, row) in previous.rows {
-            let changed = rows[id].map { $0.motionState != row.motionState } ?? true
-            guard changed, let frame = previous.frames[id], rows[id]?.view !== row.view else { continue }
-            let visible = frame.intersection(previous.viewport)
-            guard !visible.isNull, visible.width > 0, visible.height > 0 else { continue }
-            // A replaced row travels with its successor so the two never separate into a ghost; a
-            // removed row lifts away.
-            let offset =
-                rows[id].map { offset(from: frame, to: $0.view.screenFrame(model: true)) }
-                ?? CGPoint(x: 0, y: isFlipped ? -6 : 6)
-            // Retain the actual outgoing row. Native controls can overhang their alignment
-            // rect, so clip the visible intersection instead of skipping the exit entirely.
-            let overlay = OutgoingContentView(frame: convert(window.convertFromScreen(visible), from: nil))
-            overlay.wantsLayer = true
-            overlay.layer?.masksToBounds = true
-            overlay.setAccessibilityElement(false)
-            overlay.setAccessibilityChildren([])
-            row.view.translatesAutoresizingMaskIntoConstraints = true
-            row.view.frame = frame.offsetBy(dx: -visible.minX, dy: -visible.minY)
-            overlay.addSubview(row.view)
-            addSubview(overlay)
-            overlay.layoutSubtreeIfNeeded()
-            overlay.displayIfNeeded()
-            outgoingViews.append(overlay)
-            guard let outgoing = overlay.layer else { continue }
-            outgoing.opacity = 0
-            outgoing.addContentFade(appearing: false, duration: duration)
-            if !reduced {
-                outgoing.transform = CATransform3DMakeTranslation(offset.x, offset.y, 0)
-                outgoing.addContentSlide(from: .zero, to: offset, duration: duration)
-            }
-        }
-        CATransaction.commit()
-    }
-
-    /// How far this view's coordinates carry content from one screen rect's top-leading corner to another's.
-    private func offset(from old: CGRect, to new: CGRect) -> CGPoint {
-        // Screen coordinates rise upward; flipped views measure downward.
-        CGPoint(x: new.minX - old.minX, y: isFlipped ? old.maxY - new.maxY : new.maxY - old.maxY)
     }
 
     @available(*, unavailable)
@@ -367,21 +252,9 @@ final class DashboardView: NSView {
         settings.display = display
     }
 
-    @objc private func historyViewChosen(_ sender: NSSegmentedControl) {
-        guard HistoryView.allCases.indices.contains(sender.selectedSegment) else { return }
-        onHistoryViewChanged?(HistoryView.allCases[sender.selectedSegment])
-    }
-
-    @objc private func historyRangeChosen(_ sender: NSPopUpButton) {
-        guard let range = sender.selectedItem?.representedObject as? String,
-            let value = UsageHistoryRange(rawValue: range)
-        else { return }
-        onHistoryRangeChanged?(value)
-    }
-
     // MARK: - Content
 
-    private func append(
+    func append(
         _ id: RowID, state: AnyHashable, motionState: AnyHashable? = nil,
         previous: [RowID: ContentRow], makeView: () -> NSView
     ) {
@@ -449,106 +322,7 @@ final class DashboardView: NSView {
         }
     }
 
-    // MARK: - History
-
-    private func appendHistory(_ history: History, now: Date, previous: [RowID: ContentRow]) {
-        let rangeName = HistoryText.range(history.range)
-        // The header outlives selection changes: rebuilding it would crossfade the control being clicked.
-        append(.historyHeader, state: 0, previous: previous) {
-            let controls = NSStackView(views: [historyViewPicker, historyRangePicker])
-            controls.spacing = 4
-            controls.alignment = .centerY
-            return Self.row(Self.label(String(localized: "Usage"), size: 13, weight: .semibold), controls)
-        }
-        historyViewPicker.selectedSegment = HistoryView.allCases.firstIndex(of: history.view) ?? 0
-        historyRangePicker.selectItem(at: UsageHistoryRange.allCases.firstIndex(of: history.range) ?? 0)
-        // Figures for another range never stand in for the chosen one.
-        let usage = history.usage.flatMap { $0.range == history.range ? $0 : nil }
-        if let usage, !usage.apps.isEmpty {
-            let total = usage.total
-            let tokens = String(localized: "\(HistoryText.tokens(total.totalTokens)) tokens")
-            let cost = HistoryText.cost(total.costUSD)
-            let note = [
-                String(localized: "API-equivalent estimate"),
-                usage.latestRecordAt.map { String(localized: "last request \(QuotaText.age($0, now: now))") }
-            ].compactMap { $0 }.joined(separator: " · ")
-            let description = String(
-                localized:
-                    "\(rangeName): \(tokens), about \(cost) at API prices, not a bill. \(HistoryText.breakdown(total))")
-            // Reuse state covers every input of the view, including its tooltip.
-            append(
-                .historyTotal, state: [tokens, cost, note, description], motionState: [tokens, cost],
-                previous: previous
-            ) {
-                historyTotal(tokens: tokens, cost: cost, note: note, description: description)
-            }
-            switch history.view {
-            case .chart:
-                let bars = usage.buckets.map { bucket in
-                    UsageChartView.Bar(
-                        value: bucket.totals.totalTokens,
-                        label: HistoryText.bucket(bucket.interval.start, unit: usage.range.bucketUnit),
-                        detail: HistoryText.summary(bucket.totals))
-                }
-                let axis = (bars.first?.label ?? "", bars.last?.label ?? "")
-                append(
-                    .historyChart,
-                    state: [bars as AnyHashable, rangeName], motionState: usage.range, previous: previous
-                ) {
-                    UsageChartView(bars: bars, leading: axis.0, trailing: axis.1, range: rangeName)
-                }
-            case .harness, .model:
-                let groups = history.view == .harness ? usage.apps : usage.models
-                for row in Self.groupRows(groups, view: history.view) {
-                    let value = HistoryText.summary(row.totals, requests: false)
-                    let share = total.totalTokens > 0 ? Double(row.totals.totalTokens) / Double(total.totalTokens) : 0
-                    let description = "\(row.name): \(value). \(HistoryText.breakdown(row.totals))"
-                    append(
-                        .historyGroup("\(history.view.rawValue):\(row.key)"),
-                        state: [row.name, value, String(share), description], previous: previous
-                    ) {
-                        historyGroup(name: row.name, value: value, share: share, description: description)
-                    }
-                }
-            }
-        }
-        let status: String? =
-            if let issue = history.issue {
-                HistoryText.issue(issue)
-            } else if let usage {
-                usage.apps.isEmpty ? String(localized: "No usage in \(rangeName.lowercased())") : nil
-            } else {
-                String(localized: "Reading CC Switch history…")
-            }
-        if let status {
-            append(.historyStatus, state: status, previous: previous) { Self.caption(status) }
-        }
-    }
-
-    /// The largest groups by tokens; past six, the smallest fold into one "Other" row.
-    private static func groupRows(_ groups: [UsageGroup], view: HistoryView) -> [(
-        key: String, name: String, totals: UsageTotals
-    )] {
-        let limit = 6
-        let named = groups.count > limit ? Array(groups.prefix(limit - 1)) : groups
-        var rows = named.map { group in
-            (
-                key: group.key,
-                name: view == .harness ? HistoryText.appName(group.key) : HistoryText.modelName(group.key),
-                totals: group.totals
-            )
-        }
-        let rest = groups.dropFirst(named.count)
-        if !rest.isEmpty {
-            let name =
-                view == .harness
-                ? String(localized: "\(rest.count) other harnesses") : String(localized: "\(rest.count) other models")
-            rows.append((key: "\u{0}other", name: name, totals: rest.reduce(UsageTotals()) { $0 + $1.totals }))
-        }
-        return rows
-    }
-
-    private lazy var historyViewPicker: NSSegmentedControl = {
+    lazy var historyViewPicker: NSSegmentedControl = {
         let views = HistoryView.allCases
         let control = NSSegmentedControl()
         control.segmentCount = views.count
@@ -570,7 +344,7 @@ final class DashboardView: NSView {
         return control
     }()
 
-    private lazy var historyRangePicker: NSPopUpButton = {
+    lazy var historyRangePicker: NSPopUpButton = {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
         button.bezelStyle = .accessoryBarAction
         button.isBordered = false
@@ -585,32 +359,6 @@ final class DashboardView: NSView {
         button.setAccessibilityLabel(String(localized: "Usage range"))
         return button
     }()
-
-    private func historyTotal(tokens: String, cost: String, note: String, description: String) -> NSView {
-        let amount = Self.label(tokens, size: 20, weight: .semibold, monospacedDigits: true)
-        let estimate = Self.label(
-            cost, size: 13, weight: .medium, color: .secondaryLabelColor, monospacedDigits: true)
-        let stack = Self.column(spacing: 2)
-        stack.addArrangedSubview(Self.row(amount, estimate))
-        stack.addArrangedSubview(Self.caption(note))
-        Self.fill(stack)
-        Self.describe(stack, description)
-        return stack
-    }
-
-    private func historyGroup(name: String, value: String, share: Double, description: String) -> NSView {
-        let title = Self.label(name, size: 11, weight: .medium)
-        title.lineBreakMode = .byTruncatingMiddle
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        title.toolTip = name
-        let figures = Self.label(value, size: 11, color: .secondaryLabelColor, monospacedDigits: true)
-        let stack = Self.column(spacing: 4)
-        stack.addArrangedSubview(Self.row(title, figures))
-        stack.addArrangedSubview(ShareBarView(share: share))
-        Self.fill(stack)
-        Self.describe(stack, description)
-        return stack
-    }
 
     private func accountHeader(_ account: AccountUsage) -> NSView {
         let name = Self.label(QuotaText.accountName(account), size: 11, weight: account.isActive ? .medium : .regular)
@@ -740,105 +488,10 @@ final class DashboardView: NSView {
         Self.describe(stack, presentation.description)
         return stack
     }
-
-    // MARK: - Building blocks
-
-    private static func label(
-        _ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor,
-        monospacedDigits: Bool = false
-    ) -> NSTextField {
-        let field = CompanionLabel(text, size: size, weight: weight, color: color, monospacedDigits: monospacedDigits)
-        field.lineBreakMode = .byTruncatingTail
-        return field
-    }
-
-    /// Gives a composite row one tooltip and one accessibility label.
-    private static func describe(_ view: NSView, _ description: String) {
-        view.toolTip = description
-        view.setAccessibilityElement(true)
-        view.setAccessibilityLabel(description)
-    }
-
-    private static func caption(_ text: String) -> NSTextField {
-        let field = label(text, size: 11, color: .secondaryLabelColor)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return field
-    }
-
-    private static func row(_ leading: NSView, _ trailing: NSView) -> NSStackView {
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let row = NSStackView(views: [leading, spacer, trailing])
-        row.alignment = .firstBaseline
-        row.spacing = 6
-        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
-        return row
-    }
-
-    private static func column(spacing: CGFloat) -> NSStackView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = spacing
-        return stack
-    }
-
-    /// Stretches every arranged subview to the stack's width.
-    private static func fill(_ stack: NSStackView) {
-        for view in stack.arrangedSubviews { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
-    }
-
-    private static func separator() -> NSBox {
-        let box = NSBox()
-        box.boxType = .separator
-        return box
-    }
 }
 
-/// A thin track filled to an app's share of the range's tokens.
-fileprivate final class ShareBarView: NSView {
-    private let share: Double
-    private let fill = CALayer()
-
-    init(share: Double) {
-        self.share = min(max(share, 0), 1)
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 1.5
-        layer?.masksToBounds = true
-        fill.cornerRadius = 1.5
-        layer?.addSublayer(fill)
-        heightAnchor.constraint(equalToConstant: 3).isActive = true
-        setAccessibilityElement(false)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            fill.backgroundColor = NSColor.controlAccentColor.cgColor
-        }
-    }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fill.frame = CGRect(x: 0, y: 0, width: bounds.width * share, height: bounds.height)
-        CATransaction.commit()
-    }
-}
 
 /// Scroll content starts at the top.
 fileprivate final class FlippedView: NSView {
     override var isFlipped: Bool { true }
-}
-
-/// Exiting content remains drawable until its fade completes, without intercepting input.
-fileprivate final class OutgoingContentView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
