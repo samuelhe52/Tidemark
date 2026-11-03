@@ -53,7 +53,9 @@ make dmg     # 签名并公证的DMG，输出到build/release
 make release VERSION=x.y.z   # 构建并发布GitHub release
 ```
 
-发布版本使用Xcode中登录的开发者账户签名并公证。
+发布构建需要Node.js 20或更高版本和`create-dmg`（`npm install --global create-dmg`）。
+应用使用Xcode中登录的开发者账户签名并公证。
+设置`NOTARY_PROFILE`为`notarytool`钥匙串配置，即可同时公证DMG并装订公证票据。
 
 ## 许可证
 

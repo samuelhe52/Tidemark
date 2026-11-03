@@ -53,7 +53,9 @@ make dmg     # signed, notarized DMG in build/release
 make release VERSION=x.y.z   # build and publish a GitHub release
 ```
 
-Release builds sign and notarize with the developer account signed in to Xcode.
+Release builds require Node.js 20 or later and `create-dmg` (`npm install --global create-dmg`).
+The app is signed and notarized using the developer account signed in to Xcode.
+Set `NOTARY_PROFILE` to a `notarytool` keychain profile to notarize and staple the DMG itself.
 
 ## License
 

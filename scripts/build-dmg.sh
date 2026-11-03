@@ -38,6 +38,11 @@ DMG="$OUT/$APP_NAME-$VERSION.dmg"
 log() { printf '\n==> %s\n' "$*"; }
 pretty() { if command -v xcbeautify >/dev/null; then xcbeautify --disable-logging; else cat; fi; }
 
+command -v create-dmg >/dev/null || {
+  echo "create-dmg is required. Install it with: npm install --global create-dmg" >&2
+  exit 1
+}
+
 log "Archiving $APP_NAME $VERSION ($BUILD_NUMBER)"
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -94,12 +99,9 @@ IDENTITY="$(codesign -dvv "$APP" 2>&1 | sed -n 's/^Authority=\(Developer ID Appl
 [[ -n "$IDENTITY" ]] || { echo "The exported app is not signed with Developer ID." >&2; exit 1; }
 
 log "Creating $DMG"
-staging="$OUT/dmg"
-mkdir -p "$staging"
-cp -R "$APP" "$staging/"
-ln -s /Applications "$staging/Applications"
-hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$staging" -ov -format UDZO "$DMG"
-codesign --sign "$IDENTITY" --timestamp "$DMG"
+create-dmg "$APP" "$OUT" --no-version-in-filename --identity="$IDENTITY"
+mv "$OUT/$APP_NAME.dmg" "$DMG"
+codesign --verify --verbose=2 "$DMG"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
   log "Notarizing the DMG"
