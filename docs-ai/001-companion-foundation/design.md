@@ -13,8 +13,9 @@ Implementation checkpoint (2026-11-03): the first native companion and passive
 quota path are implemented; see [004](004-first-companion.md). Entry
 [002](../002-live-quota-native-surface/000-plan.md) replaced the SwiftUI surface with
 AppKit views animated by Core Animation, added live requests, CC Switch's managed
-Codex accounts and the last-good store. Metal, manifest skins and history are not
-implemented yet.
+Codex accounts and the last-good store. Entry [004](../004-usage-history/000-plan.md)
+added CC Switch history (§3.6) with the compact range picker (§3.7); provider and
+model filters are not implemented yet. Metal and manifest skins are not implemented yet.
 
 ## 1. Rest at the edge
 
@@ -309,10 +310,13 @@ WAL) and follows CC Switch's own summary query in
 
 ### 3.7 History scope
 
-Clicking the estimate changes its scope, using CC Switch's set:
+A range pop-up beside the estimate changes its scope, using CC Switch's set:
 
 - Time presets: `today`, `1d`, `7d`, `14d`, `30d`, `all`, `custom`. The compact
-  picker shows `today`, `7d`, `30d`, `all`.
+  picker shows `today`, `7d`, `14d`, `30d`, `all`.
+- Views: a bar chart over the range (hours, days, or months; hovering a bar shows its
+  tokens, cost and requests), per harness (app type), and per model. All three
+  add up to the same total. See [004.002](../004-usage-history/002-views-and-14-day.md).
 - Filters: app type, provider name, and model, each with "all".
 
 The history scope is separate from the quota account picker.
