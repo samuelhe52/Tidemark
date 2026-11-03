@@ -17,32 +17,26 @@ final class CompanionController: NSObject {
     private let settings: SettingsStore
     /// Opens the settings window; set by the app delegate.
     var openSettings: (() -> Void)?
-    private var appliedLiveEnabled: Bool
     private var layout: CompanionLayout?
     private let panel = CompanionPanel()
     private let stage: CompanionStageView
-    private let usageService: UsageService
-    private var usage: [ServiceUsage] = []
-    private var refreshedAt: Date?
-    private var refreshTask: Task<Void, Never>?
-    private var refreshAgain = false
-    private let historyReader = UsageHistoryReader(environment: .current)
-    private var history: DashboardView.History
-    private var historyTask: Task<Void, Never>?
-    private var historyAgain = false
+    private let model: UsageModel
     private var placement: DockPlacement?
     private var anchor: DockAnchor?
     private var deadlineTimer: Timer?
     private var pointerTimer: Timer?
     private var clockTimer: Timer?
-    private var refreshTimer: Timer?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var escapeMonitor: Any?
-    private var sleeping = false
-    private var locked = false
+    private var sleeping = false {
+        didSet { model.isSuspended = isSuspended }
+    }
+    private var locked = false {
+        didSet { model.isSuspended = isSuspended }
+    }
+    private var isSuspended: Bool { sleeping || locked }
     private var dragPoint: CGPoint?
-    private var lastRefresh = Date.distantPast
     /// True while the panel is shrunk to the hover strip; it grows only for visible phases.
     private var panelShowsStrip = true
     /// Identifies the newest presentation, so a superseded retract never shrinks the panel.
@@ -51,13 +45,12 @@ final class CompanionController: NSObject {
 
     init(settings: SettingsStore) {
         self.settings = settings
-        appliedLiveEnabled = settings.liveUsageEnabled
         state = CompanionState(behavior: settings.behavior)
         stage = CompanionStageView(settings: settings)
-        usageService = UsageService(liveEnabled: settings.liveUsageEnabled)
-        history = DashboardView.History(range: settings.historyRange, view: settings.historyView)
+        model = UsageModel(settings: settings)
         super.init()
         settings.onChange = { [weak self] in self?.settingsChanged() }
+        model.onChange = { [weak self] animated in self?.renderUsage(animated: animated) }
     }
 
     func start() {
@@ -76,10 +69,10 @@ final class CompanionController: NSObject {
         stage.orbHandle.pinToggled = { [weak self] in self?.send(.pinToggled) }
         stage.orbHandle.dragChanged = { [weak self] in self?.dragChanged(to: $0) }
         stage.orbHandle.dragEnded = { [weak self] in self?.dragEnded() }
-        stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        stage.dashboard.onRefresh = { [weak self] in self?.model.refresh(userInitiated: true) }
         stage.dashboard.onOpenSettings = { [weak self] in self?.openSettings?() }
-        stage.dashboard.onHistoryRangeChanged = { [weak self] in self?.setHistoryRange($0) }
-        stage.dashboard.onHistoryViewChanged = { [weak self] in self?.setHistoryView($0) }
+        stage.dashboard.onHistoryRangeChanged = { [weak self] in self?.model.setHistoryRange($0) }
+        stage.dashboard.onHistoryViewChanged = { [weak self] in self?.model.setHistoryView($0) }
         panel.contentView = stage
         renderUsage()
         updatePlacement()
@@ -122,27 +115,19 @@ final class CompanionController: NSObject {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(screenUnlocked), name: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil)
-        // Passive files every minute; the usage service rate-limits live requests on its own.
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.sleeping, !self.locked else { return }
-                self.refresh(userInitiated: false)
-            }
-        }
-        refresh(userInitiated: false)
+        model.start()
         reconcilePointer()
     }
 
     func stop() {
-        for timer in [deadlineTimer, pointerTimer, clockTimer, refreshTimer] { timer?.invalidate() }
+        for timer in [deadlineTimer, pointerTimer, clockTimer] { timer?.invalidate() }
         for monitor in [globalMonitor, localMonitor, escapeMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(monitor)
         }
         globalMonitor = nil
         localMonitor = nil
         escapeMonitor = nil
-        refreshTask?.cancel()
-        historyTask?.cancel()
+        model.stop()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -150,12 +135,10 @@ final class CompanionController: NSObject {
     }
 
     func send(_ event: CompanionEvent) {
-        guard !sleeping, !locked else { return }
+        guard !isSuspended else { return }
         let previous = state.phase
         state.send(event, now: ProcessInfo.processInfo.systemUptime)
-        if previous == .hidden, state.phase != .hidden, Date().timeIntervalSince(lastRefresh) >= 5 {
-            refresh(userInitiated: false)
-        }
+        if previous == .hidden, state.phase != .hidden { model.refreshIfStale() }
         deadlineTimer?.invalidate()
         if let deadline = state.nextDeadline {
             deadlineTimer = Timer.scheduledTimer(
@@ -197,7 +180,7 @@ final class CompanionController: NSObject {
     }
 
     func resetPlacement() {
-        guard let display = displays().first else { return }
+        guard let display = DockDisplay.current.first else { return }
         placement = DockPlacement(displayID: display.id)
         send(.reset)
         updatePlacement()
@@ -216,88 +199,11 @@ final class CompanionController: NSObject {
         // Reschedule timers using the new settings even when the phase stays the same.
         send(.timePassed)
         renderUsage(animated: true)
-        if appliedLiveEnabled != liveEnabled {
-            appliedLiveEnabled = liveEnabled
-            let enabled = liveEnabled
-            Task { [usageService] in
-                await usageService.setLiveEnabled(enabled)
-                self.refresh(userInitiated: true)
-            }
-        }
+        model.settingsChanged()
     }
 
     func toggleCompanion() {
         if state.phase == .hidden { showCompanion() } else { send(.dismiss) }
-    }
-
-    func refresh(userInitiated: Bool) {
-        refreshHistory()
-        guard refreshTask == nil else {
-            refreshAgain = refreshAgain || userInitiated
-            return
-        }
-        refreshTask = Task { [weak self, usageService] in
-            let result = await usageService.refresh(userInitiated: userInitiated)
-            guard let self else { return }
-            self.usage = result
-            self.settings.updateAccounts(result)
-            self.refreshedAt = .now
-            self.lastRefresh = .now
-            self.refreshTask = nil
-            self.renderUsage(animated: true)
-            if self.refreshAgain {
-                self.refreshAgain = false
-                self.refresh(userInitiated: true)
-            }
-        }
-        renderUsage()
-    }
-
-    // MARK: - History
-
-    private func setHistoryRange(_ range: UsageHistoryRange) {
-        guard range != history.range else { return }
-        settings.historyRange = range
-        history.range = range
-        history.issue = nil
-        // The picker already shows the new range; the rows change once its figures arrive.
-        refreshHistory()
-    }
-
-    private func setHistoryView(_ view: DashboardView.HistoryView) {
-        guard view != history.view else { return }
-        settings.historyView = view
-        history.view = view
-        renderUsage(animated: true)
-    }
-
-    /// Reads CC Switch's database off the main actor; concurrent requests coalesce into one rerun.
-    private func refreshHistory() {
-        guard historyTask == nil else {
-            historyAgain = true
-            return
-        }
-        let range = history.range
-        historyTask = Task { [weak self, historyReader] in
-            let result = await Task.detached(priority: .utility) { historyReader.read(range, now: Date()) }.value
-            guard let self, !Task.isCancelled else { return }
-            self.historyTask = nil
-            if range == self.history.range {
-                switch result {
-                case .success(let usage):
-                    self.history.usage = usage
-                    self.history.issue = nil
-                case .failure(let issue):
-                    // Keep the last good figures for this range beside the issue.
-                    self.history.issue = issue
-                }
-                self.renderUsage(animated: true)
-            }
-            if self.historyAgain {
-                self.historyAgain = false
-                self.refreshHistory()
-            }
-        }
     }
 
     // MARK: - Presentation
@@ -331,7 +237,7 @@ final class CompanionController: NSObject {
 
     private func renderUsage(animated: Bool = false) {
         let now = Date()
-        let summaryText = QuotaText.summary(usage, preferences: settings.display, now: now)
+        let summaryText = QuotaText.summary(model.usage, preferences: settings.display, now: now)
         let transition =
             !panelShowsStrip && (animated || stage.contentTransitionIsActive)
             ? stage.prepareContentTransition(for: state.phase, summaryText: summaryText) : nil
@@ -339,7 +245,7 @@ final class CompanionController: NSObject {
         stage.cancelContentTransition()
         stage.summary.update(text: summaryText)
         stage.dashboard.update(
-            usage, history: history, refreshing: refreshTask != nil, refreshedAt: refreshedAt,
+            model.usage, history: model.history, refreshing: model.isRefreshing, refreshedAt: model.refreshedAt,
             now: now)
         applyLayout(transition: transition)
     }
@@ -350,7 +256,7 @@ final class CompanionController: NSObject {
         if state.phase != .dragging { send(.dragBegan) }
         stage.cancelOrbSettle()
         dragPoint = point
-        if let nearest = DockGeometry.nearest(to: point, displays: displays()) {
+        if let nearest = DockGeometry.nearest(to: point, displays: DockDisplay.current) {
             anchor = nearest
             applyLayout()
         }
@@ -358,7 +264,7 @@ final class CompanionController: NSObject {
 
     private func dragEnded() {
         let snapOrigin = layout?.orb  // orb position while still dragging
-        if let point = dragPoint, let nearest = DockGeometry.nearest(to: point, displays: displays()) {
+        if let point = dragPoint, let nearest = DockGeometry.nearest(to: point, displays: DockDisplay.current) {
             placement = nearest.placement
             anchor = nearest
         }
@@ -375,7 +281,7 @@ final class CompanionController: NSObject {
     // MARK: - Pointer and geometry
 
     private func reconcilePointer(at eventPoint: CGPoint? = nil) {
-        guard let layout, !sleeping, !locked else { return }
+        guard let layout, !isSuspended else { return }
         let point = eventPoint ?? NSEvent.mouseLocation
         send(
             .pointer(
@@ -391,18 +297,8 @@ final class CompanionController: NSObject {
             && !layout.contains(NSEvent.mouseLocation, phase: state.phase)
     }
 
-    private func displays() -> [DockDisplay] {
-        // NSScreen.screens starts with the menu-bar display, independent of the key window.
-        NSScreen.screens.map { screen in
-            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-            let uuid = number.flatMap { CGDisplayCreateUUIDFromDisplayID($0.uint32Value)?.takeRetainedValue() }
-            let id = uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "display-\(number?.uint32Value ?? 0)"
-            return DockDisplay(id: id, frame: screen.frame, visibleFrame: screen.visibleFrame)
-        }
-    }
-
     private func updatePlacement() {
-        let screens = displays()
+        let screens = DockDisplay.current
         guard let first = screens.first else {
             panel.orderOut(nil)
             return
@@ -412,7 +308,7 @@ final class CompanionController: NSObject {
         // Retain the saved display ID so a temporarily disconnected display can reclaim its placement.
         if placement == nil { placement = anchor?.placement }
         applyLayout()
-        if !sleeping, !locked { panel.orderFrontRegardless() }
+        if !isSuspended { panel.orderFrontRegardless() }
     }
 
     private func applyLayout(transition: CompanionStageView.ContentTransition? = nil) {
@@ -467,7 +363,7 @@ final class CompanionController: NSObject {
     @objc private func didWake() {
         sleeping = false
         updatePlacement()
-        refresh(userInitiated: false)
+        model.refresh(userInitiated: false)
     }
     @objc private func screenLocked() {
         locked = true
@@ -476,6 +372,18 @@ final class CompanionController: NSObject {
     @objc private func screenUnlocked() {
         locked = false
         updatePlacement()
-        refresh(userInitiated: false)
+        model.refresh(userInitiated: false)
+    }
+}
+
+extension DockDisplay {
+    /// The connected displays, menu-bar display first, with stable IDs that survive reconnection.
+    @MainActor static var current: [DockDisplay] {
+        NSScreen.screens.map { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let uuid = number.flatMap { CGDisplayCreateUUIDFromDisplayID($0.uint32Value)?.takeRetainedValue() }
+            let id = uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "display-\(number?.uint32Value ?? 0)"
+            return DockDisplay(id: id, frame: screen.frame, visibleFrame: screen.visibleFrame)
+        }
     }
 }
