@@ -40,6 +40,17 @@ enum HistoryText {
         model.isEmpty || model.lowercased() == "unknown" ? String(localized: "Unknown model") : model
     }
 
+    /// CC Switch's display name when it has one, else the model ID. With `shortClaude`, a
+    /// "Claude " prefix goes from display names: "Claude Opus 5.5" → "Opus 5.5". Raw IDs stay whole.
+    static func modelName(_ model: String, displayName: String?, shortClaude: Bool) -> String {
+        guard let displayName else { return modelName(model) }
+        let prefix = "Claude "
+        if shortClaude, displayName.hasPrefix(prefix), displayName.count > prefix.count {
+            return String(displayName.dropFirst(prefix.count))
+        }
+        return displayName
+    }
+
     /// A chart bucket's start: "14:00", "Nov 2", "Nov 2026".
     static func bucket(_ start: Date, unit: Calendar.Component) -> String {
         switch unit {

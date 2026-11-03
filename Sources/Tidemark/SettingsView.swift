@@ -153,7 +153,7 @@ struct UsageSettingsView: View {
     @Bindable var settings: SettingsStore
 
     var body: some View {
-        SettingsPane(height: 300) {
+        SettingsPane(height: 350) {
             Section {
                 Toggle("Live usage", isOn: $settings.liveUsageEnabled)
             } footer: {
@@ -172,8 +172,63 @@ struct UsageSettingsView: View {
                     Text("Clock time").tag(QuotaResetTimeStyle.clock)
                 }
                 .pickerStyle(.segmented)
+                Toggle(isOn: $settings.shortClaudeModelNames) {
+                    Text("Short Claude model names")
+                    Text("Remove the ‘Claude’ prefix from model display names in Usage and Request Logs.")
+                }
             }
         }
+    }
+}
+
+struct RequestLogSettingsView: View {
+    @Bindable var settings: SettingsStore
+    @State private var dropTargetID: String?
+
+    var body: some View {
+        SettingsPane(height: 540) {
+            Section {
+                Text("Time is always first. Drag to reorder the other columns.")
+                    .foregroundStyle(.secondary)
+                ForEach(settings.requestLogColumns.order, id: \.self) { column in
+                    Toggle(
+                        RequestLogText.title(column),
+                        isOn: Binding(
+                            get: { !settings.requestLogColumns.hidden.contains(column) },
+                            set: { settings.requestLogColumns.setVisible($0, column) })
+                    )
+                    .draggable(column.rawValue)
+                    .dropDestination(for: String.self) { ids, _ in
+                        guard let id = ids.first, let moving = RequestLogColumn(rawValue: id),
+                            let source = settings.requestLogColumns.order.firstIndex(of: moving),
+                            let index = settings.requestLogColumns.order.firstIndex(of: column), source != index
+                        else { return false }
+                        settings.requestLogColumns.move(moving, to: source < index ? index + 1 : index)
+                        return true
+                    } isTargeted: { targeted in
+                        if targeted {
+                            dropTargetID = column.rawValue
+                        } else if dropTargetID == column.rawValue {
+                            dropTargetID = nil
+                        }
+                    }
+                    .listRowBackground(dropTargetID == column.rawValue ? Color.accentColor.opacity(0.15) : nil)
+                    .contextMenu {
+                        Button("Move Up") { move(column, delta: -1) }
+                        Button("Move Down") { move(column, delta: 1) }
+                    }
+                }
+                Button("Reset to Default") { settings.requestLogColumns.reset() }
+            } header: {
+                Text("Request Log Columns")
+            }
+        }
+    }
+
+    private func move(_ column: RequestLogColumn, delta: Int) {
+        guard let index = settings.requestLogColumns.order.firstIndex(of: column) else { return }
+        let target = min(max(0, index + delta), settings.requestLogColumns.order.count - 1)
+        settings.requestLogColumns.move(column, to: target > index ? target + 1 : target)
     }
 }
 
@@ -398,6 +453,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 AnyView(CompanionSettingsView(settings: settings, resetPosition: resetPosition))
             ),
             (String(localized: "Usage"), "chart.pie", AnyView(UsageSettingsView(settings: settings))),
+            (String(localized: "Request Logs"), "tablecells", AnyView(RequestLogSettingsView(settings: settings))),
             (String(localized: "Accounts"), "person.crop.circle", AnyView(AccountsSettingsView(settings: settings)))
         ] {
             let host = NSHostingController(rootView: view)

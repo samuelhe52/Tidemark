@@ -14,6 +14,7 @@ fixes. Ordinary tasks do not need numbered documentation.
 | 004 | 2026-11-03 | [Usage history in the dashboard](004-usage-history/000-plan.md) | Implemented — runtime layout check pending | [Action record](004-usage-history/001-action.md), [chart and model views](004-usage-history/002-views-and-14-day.md) |
 | 005 | 2026-11-03 | [Glass dock tab that morphs into the orb](005-glass-dock-morph/000-plan.md) | Implemented — runtime morph check pending | [Action record](005-glass-dock-morph/001-action.md) |
 | 006 | 2026-11-03 | [Companion settings](006-settings/000-plan.md) | Implemented — runtime verification pending | [Action record](006-settings/001-action.md) |
+| 007 | 2026-11-03 | [Request logs in the dashboard](007-request-logs/000-plan.md) | Implemented — runtime check partly pending | [Action record](007-request-logs/001-action.md), [review fixes](007-request-logs/002-review-fixes.md), [UI and model names](007-request-logs/003-ui-and-model-names.md) |
 
 ## Find a contract or source
 

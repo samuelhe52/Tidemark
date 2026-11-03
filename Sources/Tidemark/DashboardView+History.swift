@@ -70,7 +70,7 @@ extension DashboardView {
                 }
             case .harness, .model:
                 let groups = history.view == .harness ? usage.apps : usage.models
-                for row in Self.groupRows(groups, view: history.view) {
+                for row in Self.groupRows(groups, view: history.view, shortClaude: settings.shortClaudeModelNames) {
                     let value = HistoryText.summary(row.totals, requests: false)
                     let share = total.totalTokens > 0 ? Double(row.totals.totalTokens) / Double(total.totalTokens) : 0
                     let description = "\(row.name): \(value). \(HistoryText.breakdown(row.totals))"
@@ -97,7 +97,7 @@ extension DashboardView {
     }
 
     /// The largest groups by tokens; past six, the smallest fold into one "Other" row.
-    static func groupRows(_ groups: [UsageGroup], view: HistoryView) -> [(
+    static func groupRows(_ groups: [UsageGroup], view: HistoryView, shortClaude: Bool) -> [(
         key: String, name: String, totals: UsageTotals
     )] {
         let limit = 6
@@ -105,7 +105,9 @@ extension DashboardView {
         var rows = named.map { group in
             (
                 key: group.key,
-                name: view == .harness ? HistoryText.appName(group.key) : HistoryText.modelName(group.key),
+                name: view == .harness
+                    ? HistoryText.appName(group.key)
+                    : HistoryText.modelName(group.key, displayName: group.displayName, shortClaude: shortClaude),
                 totals: group.totals
             )
         }

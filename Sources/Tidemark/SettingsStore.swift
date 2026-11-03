@@ -41,6 +41,19 @@ final class SettingsStore {
         }
     }
 
+    var requestLogColumns: RequestLogColumns {
+        didSet {
+            defaults.set(requestLogColumns.order.map(\.rawValue), forKey: DefaultsKey.requestLogColumnOrder)
+            defaults.set(requestLogColumns.hidden.map(\.rawValue), forKey: DefaultsKey.requestLogHiddenColumns)
+            onChange?()
+        }
+    }
+
+    /// Shows "Claude Opus 5.5" as "Opus 5.5" wherever a model's display name appears.
+    var shortClaudeModelNames: Bool {
+        didSet { save(shortClaudeModelNames, DefaultsKey.shortClaudeModelNames) }
+    }
+
     // The companion's own state: saved, but never reported through `onChange`.
 
     /// Nil until the companion is first placed.
@@ -64,7 +77,11 @@ final class SettingsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        requestLogColumns = RequestLogColumns(
+            storedOrder: defaults.stringArray(forKey: DefaultsKey.requestLogColumnOrder),
+            storedHidden: defaults.stringArray(forKey: DefaultsKey.requestLogHiddenColumns))
         liveUsageEnabled = defaults.bool(forKey: DefaultsKey.liveUsageEnabled)
+        shortClaudeModelNames = defaults.bool(forKey: DefaultsKey.shortClaudeModelNames)
         hoverToExpand = defaults.object(forKey: DefaultsKey.hoverToExpand) as? Bool ?? true
         let normalized = CompanionBehavior(
             expansionDelay: defaults.object(forKey: DefaultsKey.expansionDelay) as? Double ?? 0.6,
@@ -76,7 +93,8 @@ final class SettingsStore {
         display.accountOrder = defaults.stringArray(forKey: DefaultsKey.accountOrder) ?? []
         // The earlier single-account choice was never released; its service is unknown until usage loads.
         defaults.removeObject(forKey: DefaultsKey.legacySummaryAccountID)
-        display.storedSummaryChoices = defaults.dictionary(forKey: DefaultsKey.summaryChoices) as? [String: String] ?? [:]
+        display.storedSummaryChoices =
+            defaults.dictionary(forKey: DefaultsKey.summaryChoices) as? [String: String] ?? [:]
         display.percentageStyle =
             defaults.string(forKey: DefaultsKey.percentageStyle)
             .flatMap(QuotaPercentageStyle.init(rawValue:)) ?? .remaining

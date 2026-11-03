@@ -87,10 +87,13 @@ public struct UsageGroup: Identifiable, Equatable, Sendable {
     /// pricing model when set, else the reported model.
     public let key: String
     public let totals: UsageTotals
+    /// For models, CC Switch's display name for `key`, when its pricing table has one.
+    public let displayName: String?
 
-    public init(key: String, totals: UsageTotals) {
+    public init(key: String, totals: UsageTotals, displayName: String? = nil) {
         self.key = key
         self.totals = totals
+        self.displayName = displayName
     }
 }
 
@@ -151,20 +154,11 @@ public struct UsageHistoryReader: Sendable {
     public func read(
         _ range: UsageHistoryRange, now: Date, calendar: Calendar = .current
     ) -> Result<UsageHistory, UsageHistoryIssue> {
-        guard FileManager.default.fileExists(atPath: database.path) else { return .failure(.missing) }
-        // `mode=ro` still reads the WAL; `immutable=1` would not.
-        var components = URLComponents()
-        components.scheme = "file"
-        components.path = database.path
-        components.queryItems = [URLQueryItem(name: "mode", value: "ro")]
-        var handle: OpaquePointer?
-        defer { sqlite3_close_v2(handle) }
-        guard let uri = components.string,
-            sqlite3_open_v2(uri, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
-            let handle
-        else { return .failure(.unreadable) }
-        sqlite3_busy_timeout(handle, 2000)
-        let connection = ReadOnlyDatabase(handle: handle)
+        let connection: ReadOnlyDatabase
+        do { connection = try ReadOnlyDatabase.open(database) } catch {
+            return .failure(error as? UsageHistoryIssue ?? .unreadable)
+        }
+        defer { sqlite3_close_v2(connection.handle) }
 
         let interval = range.interval(endingAt: now, calendar: calendar)
         let start = Int64(interval.start.timeIntervalSince1970.rounded(.down))
@@ -214,10 +208,14 @@ public struct UsageHistoryReader: Sendable {
             try connection.query("SELECT MAX(created_at) FROM proxy_request_logs", bind: []) { row in
                 latest = row.isNull(0) ? nil : row.int(0)
             }
+            let names = ModelDisplayNames.read(connection)
+            let models = Self.group(slices, by: \.model).map {
+                UsageGroup(key: $0.key, totals: $0.totals, displayName: names.name(for: $0.key))
+            }
             return .success(
                 UsageHistory(
                     range: range, interval: interval, apps: Self.group(slices, by: \.app),
-                    models: Self.group(slices, by: \.model),
+                    models: models,
                     buckets: Self.buckets(slices, range: range, interval: interval, calendar: calendar),
                     latestRecordAt: latest.map { Date(timeIntervalSince1970: TimeInterval($0)) }))
         } catch let issue as UsageHistoryIssue {
@@ -380,6 +378,26 @@ public struct UsageHistoryReader: Sendable {
 
 struct ReadOnlyDatabase {
     let handle: OpaquePointer
+
+    /// Reads the live WAL without permitting writes or creating a missing database.
+    static func open(_ database: URL) throws -> Self {
+        guard FileManager.default.fileExists(atPath: database.path) else { throw UsageHistoryIssue.missing }
+        var components = URLComponents()
+        components.scheme = "file"
+        components.path = database.path
+        components.queryItems = [URLQueryItem(name: "mode", value: "ro")]
+        var handle: OpaquePointer?
+        guard let uri = components.string,
+            sqlite3_open_v2(uri, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
+            let handle
+        else {
+            sqlite3_close_v2(handle)
+            throw UsageHistoryIssue.unreadable
+        }
+        sqlite3_busy_timeout(handle, 2000)
+        return Self(handle: handle)
+    }
+
 
     enum Value {
         case int(Int64)

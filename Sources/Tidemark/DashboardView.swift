@@ -33,7 +33,10 @@ final class DashboardView: NSView {
         var issue: UsageHistoryIssue?
     }
 
-    private let settings: SettingsStore
+    private lazy var requestLogs = RequestLogView(settings: settings)
+    private var lastLogsRefresh: Date?
+    private var rebuildingContent = false
+    let settings: SettingsStore
     private var preferences: QuotaDisplayPreferences { settings.display }
 
     // Internal rather than private: the extensions in DashboardView+*.swift share these.
@@ -59,6 +62,7 @@ final class DashboardView: NSView {
         case windows(String, [String])
         case status(String)
         case hidden(String)
+        case requestLogs
         case historyHeader
         case historyTotal
         case historyChart
@@ -108,12 +112,24 @@ final class DashboardView: NSView {
     override func layout() {
         super.layout()
         surface.frame = bounds
+        logViewportChanged()
     }
 
     /// The size the dashboard wants, never taller than `maxHeight`; longer content scrolls.
     func preferredSize(maxHeight: CGFloat) -> CGSize {
         content.layoutSubtreeIfNeeded()
-        let contentHeight = content.fittingSize.height
+        // The panel ends where the last view above the logs ends, measured from the laid-out
+        // frames in the flipped document; the logs are reached by scrolling.
+        let contentHeight: CGFloat
+        if let separator = rows[.separator("requestLogs")]?.view,
+            let index = content.arrangedSubviews.firstIndex(of: separator), index > 0,
+            let document = content.superview
+        {
+            let above = content.arrangedSubviews[index - 1]
+            contentHeight = max(0, document.convert(above.bounds, from: above).maxY)
+        } else {
+            contentHeight = content.fittingSize.height
+        }
         scrollHeight.constant = 0
         let chrome = root.fittingSize.height + Self.padding * 2
         scrollHeight.constant = max(0, min(contentHeight, maxHeight - chrome))
@@ -123,12 +139,18 @@ final class DashboardView: NSView {
     func update(
         _ services: [ServiceUsage], history: History, refreshing: Bool, refreshedAt: Date?, now: Date
     ) {
+        rebuildingContent = true
+        defer {
+            rebuildingContent = false
+            logViewportChanged()
+        }
         refreshButton.isHidden = refreshing
         spinner.isHidden = !refreshing
         if refreshing { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         updatedLabel.stringValue =
             refreshedAt.map { String(localized: "Updated \(QuotaText.age($0, now: now))") } ?? ""
 
+        let scrollOrigin = scrollView.contentView.bounds.origin
         let previous = rows
         rows = [:]
         for view in content.arrangedSubviews { view.removeFromSuperview() }
@@ -165,6 +187,15 @@ final class DashboardView: NSView {
         // Local history does not wait for quota requests.
         append(.separator("history"), state: "history", previous: previous) { Self.separator() }
         appendHistory(history, now: now, previous: previous)
+        append(.separator("requestLogs"), state: "requestLogs", previous: previous) { Self.separator() }
+        append(.requestLogs, state: "persistent", previous: previous) { requestLogs }
+        requestLogs.updateColumns()
+        content.layoutSubtreeIfNeeded()
+        scrollView.contentView.scroll(to: scrollOrigin)
+        if refreshedAt != lastLogsRefresh {
+            lastLogsRefresh = refreshedAt
+            requestLogs.refresh()
+        }
     }
 
     // MARK: - Chrome
@@ -200,12 +231,15 @@ final class DashboardView: NSView {
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(content)
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.scrollerStyle = .overlay
+        // No scroller, even when a mouse makes the system show legacy scrollers; wheel and
+        // trackpad scrolling still work.
+        scrollView.hasVerticalScroller = false
         scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         let clip = scrollView.contentView
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(logViewportChanged), name: NSView.boundsDidChangeNotification, object: clip)
         NSLayoutConstraint.activate([
             document.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
             document.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
@@ -235,6 +269,13 @@ final class DashboardView: NSView {
             root.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.padding),
             root.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2)
         ])
+    }
+
+    @objc private func logViewportChanged() {
+        // A queued callback leaves a drawable frame with the new outer offset and the old
+        // header position. Only defer during our synchronous stack rebuild, never while scrolling.
+        guard !rebuildingContent else { return }
+        requestLogs.viewportChanged(scrollView)
     }
 
     @objc private func refreshPressed() { onRefresh?() }
@@ -494,4 +535,8 @@ final class DashboardView: NSView {
 /// Scroll content starts at the top.
 fileprivate final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+    /// Pinning changes descendant geometry in the synchronous bounds-change handler.
+    ///
+    /// Do not let responsive scrolling present cached document content ahead of that handler.
+    override class var isCompatibleWithResponsiveScrolling: Bool { false }
 }

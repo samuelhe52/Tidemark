@@ -21,6 +21,9 @@ enum DefaultsKey {
     static let dockPlacement = "dockPlacement"
     static let historyRange = "usageHistoryRange"
     static let historyView = "usageHistoryView"
+    static let requestLogColumnOrder = "requestLogColumnOrder"
+    static let requestLogHiddenColumns = "requestLogHiddenColumns"
+    static let shortClaudeModelNames = "shortClaudeModelNames"
     static let keyboardShortcut = "companionKeyboardShortcut"
     /// An unreleased single-account summary choice, removed at launch.
     static let legacySummaryAccountID = "summaryAccountID"
