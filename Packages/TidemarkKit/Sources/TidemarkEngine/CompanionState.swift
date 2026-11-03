@@ -13,7 +13,7 @@ public enum CompanionPhase: Equatable {
 
 public enum CompanionEvent {
     case pointer(inside: Bool, onCompanion: Bool)
-    case companionClicked, escape, timePassed
+    case companionClicked, escape, timePassed, dismiss
     case menuOpened, menuClosed, dragBegan, dragEnded, reset
 }
 
@@ -21,6 +21,7 @@ public enum CompanionEvent {
 ///
 /// The host schedules `nextDeadline` on a monotonic clock.
 public struct CompanionState {
+    public private(set) var behavior: CompanionBehavior
     public private(set) var phase: CompanionPhase = .hidden
     public private(set) var nextDeadline: TimeInterval?
     public private(set) var pointerInside = false
@@ -28,17 +29,30 @@ public struct CompanionState {
     private var menuDepth = 0
     private var menuOpen: Bool { menuDepth > 0 }
     private var dragWasPinned = false
+    private var hoverSuppressedUntilExit = false
     private var deadlineKind: DeadlineKind?
     private enum DeadlineKind { case dwell, leave }
 
-    public init() {}
+    public init(behavior: CompanionBehavior = CompanionBehavior()) {
+        self.behavior = behavior
+    }
+
+    /// Changing timing starts a new deadline instead of retaining one from the old settings.
+    public mutating func configure(_ behavior: CompanionBehavior, now: TimeInterval) {
+        guard behavior != self.behavior else { return }
+        self.behavior = behavior
+        cancelDeadline()
+        if !behavior.hoverToExpand, phase == .revealed || phase == .expanded { phase = .hidden }
+        reconcile(now: now)
+    }
 
     public mutating func send(_ event: CompanionEvent, now: TimeInterval) {
         switch event {
         case .pointer(let inside, let onCompanion):
             pointerInside = inside
             pointerOnCompanion = onCompanion
-            if phase == .hidden, inside { phase = .revealed }
+            if !inside { hoverSuppressedUntilExit = false }
+            if phase == .hidden, inside, behavior.hoverToExpand, !hoverSuppressedUntilExit { phase = .revealed }
             reconcile(now: now)
         case .companionClicked:
             switch phase {
@@ -77,7 +91,11 @@ public struct CompanionState {
             phase = dragWasPinned ? .pinned : .revealed
             reconcile(now: now)
         case .reset:
-            self = CompanionState()
+            self = CompanionState(behavior: behavior)
+        case .dismiss:
+            hoverSuppressedUntilExit = pointerInside
+            phase = .hidden
+            cancelDeadline()
         }
     }
 
@@ -87,9 +105,9 @@ public struct CompanionState {
             return
         }
         if !pointerInside {
-            schedule(.leave, after: 0.4, now: now)
-        } else if phase == .revealed, pointerOnCompanion {
-            schedule(.dwell, after: 0.6, now: now)
+            schedule(.leave, after: behavior.retractionDelay, now: now)
+        } else if phase == .revealed, pointerOnCompanion, behavior.hoverToExpand {
+            schedule(.dwell, after: behavior.expansionDelay, now: now)
         } else {
             cancelDeadline()
         }

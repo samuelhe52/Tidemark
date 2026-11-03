@@ -12,10 +12,14 @@ import TidemarkEngine
 @MainActor
 final class CompanionController: NSObject {
     private(set) var state = CompanionState()
-    private(set) var liveEnabled: Bool
+    var liveEnabled: Bool { settings.liveUsageEnabled }
+    private let settings: SettingsStore
+    /// Opens the settings window; set by the app delegate.
+    var openSettings: (() -> Void)?
+    private var appliedLiveEnabled: Bool
     private var layout: CompanionLayout?
     private let panel = CompanionPanel()
-    private let stage = CompanionStageView(frame: .zero)
+    private let stage: CompanionStageView
     private let usageService: UsageService
     private var usage: [ServiceUsage] = []
     private var refreshedAt: Date?
@@ -44,17 +48,20 @@ final class CompanionController: NSObject {
     private var presentationGeneration = 0
     private var layoutGeneration = 0
 
-    private static let liveDefaultsKey = "liveUsageEnabled"
     private static let historyRangeKey = "usageHistoryRange"
     private static let historyViewKey = "usageHistoryView"
 
-    override init() {
-        liveEnabled = UserDefaults.standard.bool(forKey: Self.liveDefaultsKey)
-        usageService = UsageService(liveEnabled: liveEnabled)
+    init(settings: SettingsStore) {
+        self.settings = settings
+        appliedLiveEnabled = settings.liveUsageEnabled
+        state = CompanionState(behavior: settings.behavior)
+        stage = CompanionStageView(settings: settings)
+        usageService = UsageService(liveEnabled: settings.liveUsageEnabled)
         let range = UserDefaults.standard.string(forKey: Self.historyRangeKey).flatMap(UsageHistoryRange.init)
         let view = UserDefaults.standard.string(forKey: Self.historyViewKey).flatMap(DashboardView.HistoryView.init)
         history = DashboardView.History(range: range ?? .today, view: view ?? .chart)
         super.init()
+        settings.onChange = { [weak self] in self?.settingsChanged() }
     }
 
     func start() {
@@ -75,8 +82,7 @@ final class CompanionController: NSObject {
         stage.orbHandle.dragChanged = { [weak self] in self?.dragChanged(to: $0) }
         stage.orbHandle.dragEnded = { [weak self] in self?.dragEnded() }
         stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
-        stage.dashboard.onLiveChanged = { [weak self] in self?.setLiveEnabled($0) }
-        stage.dashboard.onVisibilityChanged = { [weak self] in self?.renderUsage(animated: true) }
+        stage.dashboard.onOpenSettings = { [weak self] in self?.openSettings?() }
         stage.dashboard.onHistoryRangeChanged = { [weak self] in self?.setHistoryRange($0) }
         stage.dashboard.onHistoryViewChanged = { [weak self] in self?.setHistoryView($0) }
         panel.contentView = stage
@@ -89,7 +95,9 @@ final class CompanionController: NSObject {
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .keyDown]) {
             [weak self] event in
             guard let self else { return event }
-            if event.type == .keyDown, event.keyCode == 53, self.state.phase == .pinned {
+            if event.type == .keyDown, event.keyCode == 53, self.state.phase == .pinned,
+                NSApp.keyWindow == nil || NSApp.keyWindow === self.panel
+            {
                 self.send(.escape)
             } else if event.type != .keyDown {
                 self.reconcilePointer()
@@ -202,13 +210,28 @@ final class CompanionController: NSObject {
 
     func setLiveEnabled(_ enabled: Bool) {
         guard enabled != liveEnabled else { return }
-        liveEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.liveDefaultsKey)
-        renderUsage()
-        Task { [usageService] in
-            await usageService.setLiveEnabled(enabled)
-            self.refresh(userInitiated: true)
+        settings.liveUsageEnabled = enabled
+    }
+
+    private func settingsChanged() {
+        let previous = state.phase
+        state.configure(settings.behavior, now: ProcessInfo.processInfo.systemUptime)
+        if previous != state.phase { present(animated: true) }
+        // Reschedule timers using the new settings even when the phase stays the same.
+        send(.timePassed)
+        renderUsage(animated: true)
+        if appliedLiveEnabled != liveEnabled {
+            appliedLiveEnabled = liveEnabled
+            let enabled = liveEnabled
+            Task { [usageService] in
+                await usageService.setLiveEnabled(enabled)
+                self.refresh(userInitiated: true)
+            }
         }
+    }
+
+    func toggleCompanion() {
+        if state.phase == .hidden { showCompanion() } else { send(.dismiss) }
     }
 
     func refresh(userInitiated: Bool) {
@@ -221,6 +244,7 @@ final class CompanionController: NSObject {
             let result = await usageService.refresh(userInitiated: userInitiated)
             guard let self else { return }
             self.usage = result
+            self.settings.updateAccounts(result)
             self.refreshedAt = .now
             self.lastRefresh = .now
             self.refreshTask = nil
@@ -317,9 +341,9 @@ final class CompanionController: NSObject {
         layoutGeneration += 1
         stage.dashboard.cancelContentTransition()
         let now = Date()
-        stage.summary.update(text: QuotaText.summary(usage, now: now))
+        stage.summary.update(text: QuotaText.summary(usage, preferences: settings.display, now: now))
         stage.dashboard.update(
-            usage, history: history, liveEnabled: liveEnabled, refreshing: refreshTask != nil, refreshedAt: refreshedAt,
+            usage, history: history, refreshing: refreshTask != nil, refreshedAt: refreshedAt,
             now: now)
         applyLayout(transition: transition)
     }

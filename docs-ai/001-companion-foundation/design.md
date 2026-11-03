@@ -15,7 +15,7 @@ quota path are implemented; see [004](004-first-companion.md). Entry
 AppKit views animated by Core Animation, added live requests, CC Switch's managed
 Codex accounts and the last-good store. Entry [004](../004-usage-history/000-plan.md)
 added CC Switch history (§3.6) with the compact range picker (§3.7); provider and
-model filters are not implemented yet. Metal and manifest skins are not implemented yet.
+model filters are not implemented yet. Entry [006](../006-settings/000-plan.md) adds the settings window and configurable interaction and quota presentation; its runtime and visual checks are deferred by the maintainer. Metal and manifest skins are not implemented yet.
 
 ## 1. Rest at the edge
 
@@ -45,6 +45,7 @@ final class CompanionPanel: NSPanel {
 }
 ```
 
+- Settings opens in a separate ordinary, focusable window; the companion panel remains nonactivating.
 - The companion **hides over full-screen apps**, so the panel does not use
   `.fullScreenAuxiliary`. Test on full-screen Spaces and Stage Manager.
 
@@ -133,7 +134,7 @@ enum Timing {
 }
 ```
 
-- These are starting values to tune, not validated numbers.
+- These remain the defaults. Settings allows expansion and retraction delays from 0 to 3 seconds in 0.1-second steps. Click-only activation keeps the edge glow until clicked and skips hover reveal/expansion. Changing behavior reschedules pending deadlines; reset-position and sleep/wake preserve the saved behavior. Runtime timing validation for these settings is pending.
 - The dwell timer stops if the pointer leaves or a drag starts.
 - The leave grace starts only outside the union of the orb, the panel, and the
   travel corridor between them.
@@ -167,8 +168,8 @@ extension MotionCurve {   // TidemarkAppearance/CompanionMotion.swift
 
 ## 3. Dashboard
 
-The panel shows, for each account, every quota window it reports: the percent left,
-the reset time, and the source with its age (for example "statusline · 40 s ago").
+The panel shows, for each visible account, every quota window it reports: the percent remaining (or used, as chosen in Settings),
+the reset countdown (or local clock time, including the date on later days), and the source with its age (for example "statusline · 40 s ago").
 Below the quotas, CC Switch history shows tokens and an estimated API-equivalent
 cost, which is not a bill.
 
@@ -319,7 +320,7 @@ A range pop-up beside the estimate changes its scope, using CC Switch's set:
   add up to the same total. See [004.002](../004-usage-history/002-views-and-14-day.md).
 - Filters: app type, provider name, and model, each with "all".
 
-The history scope is separate from the quota account picker.
+The history scope is separate from account visibility, ordering, and compact-summary selection. History range/view and dock placement continue to be remembered automatically.
 
 ## 4. Appearance
 
@@ -420,3 +421,17 @@ struct QuotaWindow: Codable {
 - From Codenotch, keep the non-activating panel, the pin, and the dated last good
   data; drop its provider list.
 - Direct download, Developer ID signed and notarized, macOS 15 or later. No App Store.
+
+## 7. Settings (2026-11-03 amendment)
+
+The menu's **Settings…** action, the dashboard's gear button, and Command-comma (while Tidemark is active) open a toolbar-style settings window with General, Companion, Usage, and Accounts panes of grouped forms. The scope is the eleven settings selected by the maintainer; no additional appearance, history, refresh-frequency, or notification controls are exposed.
+
+- Launch at login reflects ServiceManagement's actual main-app registration status, reports errors, and links to Login Items when approval is needed. Opening settings never registers a login item.
+- The optional global shortcut shows/hides the companion. The recorder requires Command, Control, or Option; Escape cancels and Delete clears. Recording suspends the previous shortcut, restores it on cancellation, and reports registration failures. No shortcut is assigned by default.
+- Hover/click-only activation, expansion delay, retraction delay, and Reset Position are available in Companion. Click still pins; explicit shortcut dismissal stays hidden until the pointer leaves and reenters.
+- Live Usage remains off by default. Its menu and settings controls share one persisted value; the dashboard has no Live Usage control or footer, and shows the last refresh age in its header. Existing credential ownership and request gates are unchanged.
+- Account visibility is shared with inline dashboard hide/restore controls. Settings reorders accounts by dragging, with context-menu and accessibility move actions. The saved order applies globally, including interleaved providers; consecutive provider runs get separate headings with unique row identities. Unknown/new accounts append; temporarily absent accounts retain their saved slots.
+- Compact summary offers Automatic (one visible account per service, preferring the active account) or one visible account. A missing explicit selection shows unavailable instead of substituting another account. Hiding the selected account resets selection to Automatic.
+- Remaining/used applies to labels, gauge progress, compact summary, tooltips, and accessibility descriptions. Reset countdown/clock applies to quota reset labels. Freshness rules remain fixed.
+
+Implementation and build/package-test evidence is recorded in [006](../006-settings/001-action.md). Settings layout, global key delivery, login-item behavior, and interactive integration remain unverified at runtime until launch is authorized.

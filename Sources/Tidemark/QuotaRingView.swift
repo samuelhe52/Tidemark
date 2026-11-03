@@ -6,22 +6,26 @@
 //
 
 import AppKit
+import TidemarkData
 
-/// A compact quota-remaining gauge.
+/// A compact quota gauge in the selected percentage style.
 ///
 /// Unknown readings have no progress stroke.
 final class QuotaRingView: NSView {
-    private let remaining: Double?
+    private let progressValue: Double?
 
-    init(remaining: Double?) {
-        self.remaining = remaining
+    init(remaining: Double?, style: QuotaPercentageStyle) {
+        let percentage = style.value(remaining: remaining)
+        self.progressValue = percentage
         super.init(frame: .zero)
 
-        let value = CompanionLabel(labelWithString: remaining.map(QuotaText.percent) ?? "—")
+        let value = CompanionLabel(labelWithString: percentage.map(QuotaText.percent) ?? "—")
         value.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         value.textColor = remaining == nil ? .secondaryLabelColor : .labelColor
         let unit = CompanionLabel(
-            labelWithString: remaining == nil ? String(localized: "unknown") : String(localized: "left"))
+            labelWithString: remaining == nil
+                ? String(localized: "unknown")
+                : style == .remaining ? String(localized: "left") : String(localized: "used"))
         unit.font = .systemFont(ofSize: 8)
         unit.textColor = .secondaryLabelColor
         let labels = NSStackView(views: [value, unit])
@@ -54,16 +58,16 @@ final class QuotaRingView: NSView {
         NSColor.labelColor.withAlphaComponent(0.08).setStroke()
         track.stroke()
 
-        guard let remaining, remaining > 0 else { return }
+        guard let percentage = progressValue, percentage > 0 else { return }
         let progress = NSBezierPath()
         progress.lineWidth = 2.5
         progress.lineCapStyle = .round
-        if remaining >= 100 {
+        if percentage >= 100 {
             progress.appendOval(in: rect)
         } else {
             progress.appendArc(
                 withCenter: NSPoint(x: bounds.midX, y: bounds.midY), radius: rect.width / 2,
-                startAngle: 90, endAngle: 90 - 360 * remaining / 100, clockwise: true)
+                startAngle: 90, endAngle: 90 - 360 * percentage / 100, clockwise: true)
         }
         NSColor.controlAccentColor.setStroke()
         progress.stroke()

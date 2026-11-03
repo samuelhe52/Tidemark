@@ -106,15 +106,31 @@ enum QuotaText {
             .min { $0.1 < $1.1 }
     }
 
-    /// "Claude 5h 87% · Codex 7d 30%"
-    static func summary(_ services: [ServiceUsage], now: Date) -> String {
+    static func percentageDescription(_ remaining: Double, style: QuotaPercentageStyle) -> String {
+        let value = percent(style.value(remaining: remaining) ?? remaining)
+        return style == .remaining ? String(localized: "\(value) left") : String(localized: "\(value) used")
+    }
+
+    static func resetTime(_ date: Date, style: QuotaResetTimeStyle, now: Date) -> String {
+        if style == .countdown { return String(localized: "Resets in \(duration(date.timeIntervalSince(now)))") }
+        let format = DateFormatter()
+        format.timeStyle = .short
+        format.dateStyle = Calendar.current.isDate(date, inSameDayAs: now) ? .none : .short
+        return String(localized: "Resets at \(format.string(from: date))")
+    }
+
+    static func summary(_ services: [ServiceUsage], preferences: QuotaDisplayPreferences, now: Date) -> String {
         guard !services.isEmpty else { return String(localized: "Reading usage…") }
-        return services.map { service in
-            let name = shortServiceName(service.service)
-            guard let account = service.accounts.first(where: \.isActive) ?? service.accounts.first,
-                let (window, remaining) = tightestWindow(account, now: now)
-            else { return "\(name) —" }
-            return [name, shortWindowName(window), percent(remaining)].filter { !$0.isEmpty }.joined(separator: " ")
+        let accounts = preferences.summaryAccounts(in: services)
+        guard !accounts.isEmpty else {
+            return preferences.summaryAccountID == nil
+                ? String(localized: "No visible accounts") : String(localized: "Selected account unavailable")
+        }
+        return accounts.map { account in
+            let name = shortServiceName(account.service)
+            guard let (window, remaining) = tightestWindow(account, now: now) else { return "\(name) —" }
+            return [name, shortWindowName(window), percentageDescription(remaining, style: preferences.percentageStyle)]
+                .filter { !$0.isEmpty }.joined(separator: " ")
         }.joined(separator: "  ·  ")
     }
 }

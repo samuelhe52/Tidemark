@@ -15,8 +15,7 @@ final class DashboardView: NSView {
     private static let padding: CGFloat = 16
 
     var onRefresh: (() -> Void)?
-    var onLiveChanged: ((Bool) -> Void)?
-    var onVisibilityChanged: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
     var onHistoryRangeChanged: ((UsageHistoryRange) -> Void)?
     var onHistoryViewChanged: ((HistoryView) -> Void)?
 
@@ -34,17 +33,16 @@ final class DashboardView: NSView {
         var issue: UsageHistoryIssue?
     }
 
-    private static let hiddenAccountsKey = "hiddenDashboardAccountIDs"
-    private let defaults: UserDefaults
-    private var hiddenAccountIDs: Set<String>
+    private let settings: SettingsStore
+    private var preferences: QuotaDisplayPreferences { settings.display }
 
     private let surface = GlassSurfaceView(cornerRadius: CompanionLayout.dashboardCornerRadius, kind: .content)
     private let root = NSStackView()
     private let refreshButton = NSButton()
+    private let settingsButton = NSButton()
     private let spinner = NSProgressIndicator()
     private let scrollView = NSScrollView()
     private let content = NSStackView()
-    private let liveSwitch = NSSwitch()
     private let updatedLabel = DashboardView.label("", size: 11, color: .tertiaryLabelColor)
     private var scrollHeight: NSLayoutConstraint!
     private var rows: [RowID: ContentRow] = [:]
@@ -84,21 +82,19 @@ final class DashboardView: NSView {
     private struct WindowPresentation {
         let name: String
         let remaining: Double?
+        let percentageStyle: QuotaPercentageStyle
         let status: String
         let description: String
 
-        var state: [String] { [name, remaining.map { String($0) } ?? "unknown", status, description] }
-        var motionState: [String] { [name, remaining.map { String($0) } ?? "unknown"] }
+        var state: [String] {
+            [name, remaining.map { String($0) } ?? "unknown", percentageStyle.rawValue, status, description]
+        }
+        var motionState: [String] { [name, remaining.map { String($0) } ?? "unknown", percentageStyle.rawValue] }
     }
 
-    override convenience init(frame frameRect: NSRect) {
-        self.init(frame: frameRect, defaults: .standard)
-    }
-
-    init(frame frameRect: NSRect, defaults: UserDefaults) {
-        self.defaults = defaults
-        hiddenAccountIDs = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
-        super.init(frame: frameRect)
+    init(settings: SettingsStore) {
+        self.settings = settings
+        super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = false
         surface.autoresizingMask = [.width, .height]
@@ -211,8 +207,9 @@ final class DashboardView: NSView {
         CGPoint(x: new.minX - old.minX, y: isFlipped ? old.maxY - new.maxY : new.maxY - old.maxY)
     }
 
-    /// Animates `view` from its old screen rect to its current frame. Rows only translate, top edge to
-    /// top edge, so their text never stretches; the glass surface also scales.
+    /// Animates `view` from its old screen rect to its current frame.
+    ///
+    /// Rows only translate, top edge to top edge, so their text never stretches; the glass surface also scales.
     private func move(_ view: NSView, from previous: CGRect, duration: CFTimeInterval, scales: Bool = false) {
         guard let window, let parent = view.superview, let layer = view.layer else { return }
         let target = view.frame
@@ -279,13 +276,11 @@ final class DashboardView: NSView {
     }
 
     func update(
-        _ services: [ServiceUsage], history: History, liveEnabled: Bool, refreshing: Bool, refreshedAt: Date?,
-        now: Date
+        _ services: [ServiceUsage], history: History, refreshing: Bool, refreshedAt: Date?, now: Date
     ) {
         refreshButton.isHidden = refreshing
         spinner.isHidden = !refreshing
         if refreshing { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
-        liveSwitch.state = liveEnabled ? .on : .off
         updatedLabel.stringValue =
             refreshedAt.map { String(localized: "Updated \(QuotaText.age($0, now: now))") } ?? ""
 
@@ -298,11 +293,29 @@ final class DashboardView: NSView {
                 Self.label(text, size: 12, color: .secondaryLabelColor)
             }
         }
-        for (index, service) in services.enumerated() {
-            if index > 0 {
-                append(.separator(service.service.rawValue), state: [], previous: previous) { Self.separator() }
+        // Split into consecutive provider runs to honor a global account order, including interleaving.
+        var sections: [ServiceUsage] = []
+        for account in preferences.orderedAccounts(in: services, visibleOnly: true) {
+            if let last = sections.last, last.service == account.service {
+                sections[sections.count - 1] = ServiceUsage(service: last.service, accounts: last.accounts + [account])
+            } else {
+                sections.append(ServiceUsage(service: account.service, accounts: [account]))
             }
-            appendSection(service, now: now, previous: previous)
+        }
+        for (index, service) in sections.enumerated() {
+            let sectionID = service.accounts.first?.id ?? service.service.rawValue
+            if index > 0 {
+                append(.separator(sectionID), state: [], previous: previous) { Self.separator() }
+            }
+            let accountCount = services.first { $0.service == service.service }?.accounts.count ?? 0
+            appendSection(
+                service, sectionID: sectionID, multipleAccounts: accountCount > 1, now: now, previous: previous)
+        }
+        let hidden = preferences.orderedAccounts(in: services).filter { preferences.hiddenAccountIDs.contains($0.id) }
+        if !hidden.isEmpty {
+            append(.hidden("all"), state: hidden.flatMap { [$0.id, $0.email ?? ""] }, previous: previous) {
+                hiddenAccountsMenu(hidden)
+            }
         }
         // Local history does not wait for quota requests.
         append(.separator("history"), state: [], previous: previous) { Self.separator() }
@@ -313,21 +326,26 @@ final class DashboardView: NSView {
 
     private func buildChrome() {
         let title = Self.label(String(localized: "Tidemark"), size: 13, weight: .semibold)
-        refreshButton.image = NSImage(
-            systemSymbolName: "arrow.clockwise", accessibilityDescription: String(localized: "Refresh usage"))
-        refreshButton.isBordered = false
-        refreshButton.bezelStyle = .accessoryBarAction
-        refreshButton.contentTintColor = .secondaryLabelColor
-        refreshButton.toolTip = String(localized: "Refresh usage")
-        refreshButton.target = self
-        refreshButton.action = #selector(refreshPressed)
+        for (button, symbol, help, action) in [
+            (refreshButton, "arrow.clockwise", String(localized: "Refresh usage"), #selector(refreshPressed)),
+            (settingsButton, "gearshape", String(localized: "Settings"), #selector(settingsPressed))
+        ] {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
+            button.isBordered = false
+            button.bezelStyle = .accessoryBarAction
+            button.contentTintColor = .secondaryLabelColor
+            button.toolTip = help
+            button.target = self
+            button.action = action
+        }
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         spinner.isHidden = true
-        let header = NSStackView(views: [title, NSView(), spinner, refreshButton])
+        let header = NSStackView(views: [title, NSView(), updatedLabel, spinner, refreshButton, settingsButton])
         header.distribution = .fill
         header.alignment = .centerY
+        header.setCustomSpacing(4, after: refreshButton)
 
         content.orientation = .vertical
         content.alignment = .leading
@@ -355,22 +373,11 @@ final class DashboardView: NSView {
         scrollHeight = scrollView.heightAnchor.constraint(equalToConstant: 0)
         scrollHeight.isActive = true
 
-        liveSwitch.controlSize = .mini
-        liveSwitch.target = self
-        liveSwitch.action = #selector(liveToggled)
-        liveSwitch.setAccessibilityLabel(String(localized: "Live usage"))
-        let liveLabel = Self.label(String(localized: "Live usage"), size: 11, color: .secondaryLabelColor)
-        liveLabel.toolTip = String(
-            localized: "Ask Anthropic and OpenAI with the agents' own sign-ins. Tidemark never renews them.")
-        let footer = NSStackView(views: [liveSwitch, liveLabel, NSView(), updatedLabel])
-        footer.alignment = .centerY
-        footer.spacing = 6
-
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 10
         root.translatesAutoresizingMaskIntoConstraints = false
-        for view in [header, Self.separator(), scrollView, Self.separator(), footer] as [NSView] {
+        for view in [header, Self.separator(), scrollView] as [NSView] {
             root.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         }
@@ -386,18 +393,18 @@ final class DashboardView: NSView {
     }
 
     @objc private func refreshPressed() { onRefresh?() }
-    @objc private func liveToggled() { onLiveChanged?(liveSwitch.state == .on) }
+    @objc private func settingsPressed() { onOpenSettings?() }
 
     @objc private func hideAccount(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
-        hiddenAccountIDs.insert(id)
-        saveVisibility()
+        settings.setVisible(false, accountID: id)
     }
 
     @objc private func showAccounts(_ sender: NSMenuItem) {
         guard let ids = sender.representedObject as? [String] else { return }
-        hiddenAccountIDs.subtract(ids)
-        saveVisibility()
+        var display = settings.display
+        for id in ids { display.setVisible(true, accountID: id) }
+        settings.display = display
     }
 
     @objc private func historyViewChosen(_ sender: NSSegmentedControl) {
@@ -410,11 +417,6 @@ final class DashboardView: NSView {
             let value = UsageHistoryRange(rawValue: range)
         else { return }
         onHistoryRangeChanged?(value)
-    }
-
-    private func saveVisibility() {
-        defaults.set(hiddenAccountIDs.sorted(), forKey: Self.hiddenAccountsKey)
-        onVisibilityChanged?()
     }
 
     // MARK: - Content
@@ -431,20 +433,22 @@ final class DashboardView: NSView {
         view.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
 
-    private func appendSection(_ service: ServiceUsage, now: Date, previous: [RowID: ContentRow]) {
-        let single = service.accounts.count == 1 ? service.accounts.first : nil
-        let singleVisible = single.flatMap { hiddenAccountIDs.contains($0.id) ? nil : $0 }
+    private func appendSection(
+        _ service: ServiceUsage, sectionID: String, multipleAccounts: Bool, now: Date, previous: [RowID: ContentRow]
+    ) {
+        let single = multipleAccounts ? nil : service.accounts.first
+        let singleVisible = single
         let name = QuotaText.serviceName(service.service)
         let planName = QuotaText.plan(singleVisible?.plan) ?? ""
         append(
-            .service(service.service.rawValue),
+            .service(sectionID),
             state: [name, planName, singleVisible?.id ?? "", singleVisible?.email ?? ""], previous: previous
         ) {
             let title = Self.label(name, size: 13, weight: .semibold)
             let plan = Self.label(planName, size: 11, color: .secondaryLabelColor)
             return Self.row(title, singleVisible.map { accountControls($0, detail: plan) } ?? plan)
         }
-        for account in service.accounts where !hiddenAccountIDs.contains(account.id) {
+        for account in service.accounts {
             if single == nil {
                 append(
                     .account(account.id), state: [account.email ?? "", account.plan ?? "", String(account.isActive)],
@@ -474,12 +478,6 @@ final class DashboardView: NSView {
                 let text = QuotaText.issue(issue, service: service.service)
                 append(.status(account.id), state: [text], previous: previous) { Self.caption(text) }
             }
-        }
-        let hidden = service.accounts.filter { hiddenAccountIDs.contains($0.id) }
-        if !hidden.isEmpty {
-            append(
-                .hidden(service.service.rawValue), state: hidden.flatMap { [$0.id, $0.email ?? ""] }, previous: previous
-            ) { hiddenAccountsMenu(hidden) }
         }
     }
 
@@ -700,7 +698,8 @@ final class DashboardView: NSView {
         let menu = NSMenu()
         menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         for account in accounts {
-            let name = account.email ?? String(localized: "Signed-in account")
+            let name =
+                "\(QuotaText.shortServiceName(account.service)) · \(account.email ?? String(localized: "Signed-in account"))"
             let item = menu.addItem(
                 withTitle: String(localized: "Show \(name)"), action: #selector(showAccounts(_:)), keyEquivalent: "")
             item.target = self
@@ -731,7 +730,12 @@ final class DashboardView: NSView {
             status =
                 String(localized: "Stale · \(QuotaText.age(window.observedAt, now: now))")
             detail =
-                window.usedPercent.map { String(localized: "Last seen \(QuotaText.percent(100 - $0)) left") }
+                window.usedPercent.map {
+                    String(
+                        localized:
+                            "Last seen \(QuotaText.percentageDescription(100 - $0, style: preferences.percentageStyle))"
+                    )
+                }
                 ?? String(localized: "Reading too old to trust")
         case .unknown:
             status = String(localized: "Unknown · \(QuotaText.age(window.observedAt, now: now))")
@@ -740,22 +744,24 @@ final class DashboardView: NSView {
                 ? String(localized: "No percentage reported") : String(localized: "Reading time is in the future")
         case .current, .aging:
             status =
-                window.resetsAt.map { String(localized: "Resets in \(QuotaText.duration($0.timeIntervalSince(now)))") }
+                window.resetsAt.map { QuotaText.resetTime($0, style: preferences.resetTimeStyle, now: now) }
                 ?? ""
             detail = status
         }
         let source = "\(QuotaText.source(window.source)) · \(QuotaText.age(window.observedAt, now: now))"
         let value =
-            remaining.map { String(localized: "\(QuotaText.percent($0)) left") }
+            remaining.map { QuotaText.percentageDescription($0, style: preferences.percentageStyle) }
             ?? String(localized: "Unknown")
         let description = [name, value, status, detail == status ? "" : detail, source]
             .filter { !$0.isEmpty }.joined(separator: ", ")
-        return WindowPresentation(name: name, remaining: remaining, status: status, description: description)
+        return WindowPresentation(
+            name: name, remaining: remaining, percentageStyle: preferences.percentageStyle, status: status,
+            description: description)
     }
 
     private func windowTile(_ presentation: WindowPresentation) -> NSView {
         let name = Self.label(presentation.name, size: 11, weight: .medium)
-        let ring = QuotaRingView(remaining: presentation.remaining)
+        let ring = QuotaRingView(remaining: presentation.remaining, style: presentation.percentageStyle)
         let text = Self.column(spacing: 3)
         text.addArrangedSubview(name)
         let caption = CompanionLabel(wrappingLabelWithString: presentation.status)

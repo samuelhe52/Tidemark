@@ -17,14 +17,15 @@ import TidemarkEngine
 final class CompanionStageView: NSView {
     let orbHandle = OrbHandleView(frame: .zero)
     let summary = SummaryView(frame: .zero)
-    let dashboard = DashboardView(frame: .zero)
+    let dashboard: DashboardView
 
     var pointerChanged: ((NSEvent) -> Void)?
     var stripClicked: ((NSEvent) -> Bool)?
     var hiddenStripActive: (() -> Bool)?
     private var trackingArea: NSTrackingArea?
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(settings: SettingsStore) {
+        dashboard = DashboardView(settings: settings)
+        super.init(frame: .zero)
         wantsLayer = true
         for view in [dashboard, summary, orbHandle] as [NSView] {
             view.wantsLayer = true

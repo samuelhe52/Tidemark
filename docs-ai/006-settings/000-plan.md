@@ -1,0 +1,56 @@
+# 006 — Companion settings: Plan
+
+| Field | Value |
+| --- | --- |
+| Status | Implemented — runtime and visual verification deferred by maintainer |
+| Anchor date | 2026-11-03 |
+| Origin | Maintainer selected eleven settings and requested implementation in a worktree, with no app launch until explicitly authorized. |
+| Related | [Foundation](../001-companion-foundation/000-plan.md), [live quota](../002-live-quota-native-surface/000-plan.md), [account visibility](../003-direct-multi-account-quota/002-account-visibility.md) |
+
+## Background
+
+The menu and dashboard expose a few independent preferences. Users need one native settings window for login, a global shortcut, hover behavior and timing, position recovery, Live Usage, account visibility/order, compact-summary account, percentage style, and reset-time style.
+
+## Goals
+
+- Implement exactly the agreed settings with persistent changes applied immediately.
+- Preserve the native dashboard's system typography, controls, materials, and account identity.
+- Carry existing Live Usage and hidden-account preferences forward; continue remembering history choices and dock placement automatically.
+- Support account ordering across providers, retaining absent accounts' saved positions. Newly discovered accounts follow known accounts.
+- Keep stale, expired, future-dated, and absent quota readings unknown in both percentage styles.
+
+### Non-goals
+
+Additional appearance controls, notifications, refresh frequency, skins, and other previously omitted settings. No commits or remote mutations. No app launch or visual verification until the maintainer authorizes it.
+
+## Design / approach
+
+- App files: `SettingsStore.swift`, `SettingsView.swift`, and `GlobalShortcut.swift`. One shared observable preferences store connects native settings, menu actions, dashboard controls, and companion rendering.
+- A regular, focusable settings window hosts a system grouped form. The companion remains nonactivating. Settings opens from the menu with Command-comma.
+- Use ServiceManagement's main-app login registration and reflect its actual status, including failures and approval requirements. Do not register during initialization.
+- Use the system global-hotkey API with a shortcut recorder, clear/cancel support, and registration-error feedback. Registration happens only in the running app, not during validation.
+- `CompanionBehavior` in Engine controls hover expansion and bounded timing. Click-only keeps the edge glow until clicked. Pin, drag, menu, and leave protections remain intact.
+- `QuotaDisplayPreferences` in Data normalizes account visibility/order/summary selection and percentage conversion without UI dependencies. Dashboard section identifiers remain unique even when users interleave providers.
+- Keep account hiding available inline, synchronized with settings. Summary selection offers Automatic (current behavior over visible accounts) or one visible account. Hiding the selected account returns to Automatic; a temporarily absent selected account shows unknown.
+- Quota gauges, labels, tooltips, accessibility descriptions, and compact summary consistently use remaining/used. Clock time includes the date for resets on later days.
+
+## Alternatives & decisions
+
+| Choice | Reason and alternative |
+| --- | --- |
+| Native grouped settings form | Matches the existing native UI language without introducing custom skin controls. |
+| Separate Engine behavior and Data display preferences | Preserves module boundaries; the app owns persistence and OS services. |
+| Global order with repeated service headings when interleaved | Honors exact account order instead of silently constraining order to provider groups. |
+| Automatic defaults and explicit shortcut recording | Preserves current hover/timing/display behavior and avoids reserving an unsolicited shortcut. |
+
+## Validation and acceptance criteria
+
+- Focused Engine tests cover click-only, custom timing, settings changes during deadlines, and pin/menu/drag safeguards.
+- Data tests cover visibility, interleaved ordering, discovery/removal, summary selection, unknown readings, and an isolated app-store preference round trip in both styles.
+- Run `make test`, `make build`, touched-file formatting/lint, and `git diff --check`.
+- Review integration source for preference synchronization and OS-service failure handling.
+- Runtime/visual checks, login registration, and global shortcut delivery remain explicitly pending; do not launch the app.
+
+## Amendments
+
+None yet.
