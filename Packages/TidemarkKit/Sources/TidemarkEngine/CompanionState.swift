@@ -13,7 +13,7 @@ public enum CompanionPhase: Equatable {
 
 public enum CompanionEvent {
     case pointer(inside: Bool, onCompanion: Bool)
-    case companionClicked, escape, timePassed, dismiss
+    case companionClicked, pinToggled, escape, timePassed, dismiss
     case menuOpened, menuClosed, dragBegan, dragEnded, reset
 }
 
@@ -30,6 +30,8 @@ public struct CompanionState {
     private var menuOpen: Bool { menuDepth > 0 }
     private var dragWasPinned = false
     private var hoverSuppressedUntilExit = false
+    /// A click that closed the dashboard keeps the dwell from reopening it under the same pointer.
+    private var dwellSuppressedUntilOrbExit = false
     private var deadlineKind: DeadlineKind?
     private enum DeadlineKind { case dwell, leave }
 
@@ -42,7 +44,7 @@ public struct CompanionState {
         guard behavior != self.behavior else { return }
         self.behavior = behavior
         cancelDeadline()
-        if !behavior.hoverToExpand, phase == .revealed || phase == .expanded { phase = .hidden }
+        if !behavior.hoverToExpand, phase == .expanded { phase = .revealed }
         reconcile(now: now)
     }
 
@@ -52,9 +54,20 @@ public struct CompanionState {
             pointerInside = inside
             pointerOnCompanion = onCompanion
             if !inside { hoverSuppressedUntilExit = false }
-            if phase == .hidden, inside, behavior.hoverToExpand, !hoverSuppressedUntilExit { phase = .revealed }
+            if !onCompanion { dwellSuppressedUntilOrbExit = false }
+            if phase == .hidden, inside, !hoverSuppressedUntilExit { phase = .revealed }
             reconcile(now: now)
         case .companionClicked:
+            switch phase {
+            case .hidden, .revealed: phase = .expanded
+            case .expanded, .pinned:
+                phase = .revealed
+                dwellSuppressedUntilOrbExit = pointerOnCompanion
+            case .dragging: return
+            }
+            cancelDeadline()
+            reconcile(now: now)
+        case .pinToggled:
             switch phase {
             case .hidden, .revealed, .expanded: phase = .pinned
             case .pinned: phase = .expanded
@@ -106,7 +119,7 @@ public struct CompanionState {
         }
         if !pointerInside {
             schedule(.leave, after: behavior.retractionDelay, now: now)
-        } else if phase == .revealed, pointerOnCompanion, behavior.hoverToExpand {
+        } else if phase == .revealed, pointerOnCompanion, behavior.hoverToExpand, !dwellSuppressedUntilOrbExit {
             schedule(.dwell, after: behavior.expansionDelay, now: now)
         } else {
             cancelDeadline()

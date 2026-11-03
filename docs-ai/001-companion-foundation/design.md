@@ -95,10 +95,11 @@ func pointerMoved(to p: CGPoint) {
 | hidden | hover | revealed |
 | revealed | leave | hidden |
 | revealed | 600 ms dwell | expanded |
-| revealed | click | pinned |
+| revealed | click | expanded |
+| revealed, expanded | Option-click or right-click | pinned |
 | expanded | leave | hidden |
-| expanded | click | pinned |
-| pinned | click on the orb, Esc | expanded |
+| expanded, pinned | click | revealed |
+| pinned | Option-click or right-click, Esc | expanded |
 
 - **hidden:** the docked glass tab only.
 - **revealed:** the orb with a one-line summary, such as `Claude 5h 38% · Codex 7d 64%`.
@@ -114,7 +115,7 @@ effects, not callbacks, so tests feed events and a fake clock.
 enum Phase { case hidden, revealed, expanded, pinned, dragging }
 
 enum EngineEvent {
-  case pointer(CGPoint), click, escape
+  case pointer(CGPoint), click, pinToggle, escape
   case dragBegan, dragEnded(CGPoint)
   case deadline(Date), displaysChanged, wake
 }
@@ -138,7 +139,7 @@ enum Timing {
 }
 ```
 
-- These are the defaults. Settings allows expansion and retraction delays from 0 to 3 seconds in 0.1-second steps. Click-only activation keeps the docked glass tab until clicked and skips hover reveal/expansion. Changing behavior reschedules pending deadlines; reset-position and sleep/wake preserve the saved behavior.
+- These are the defaults. Settings allows expansion and retraction delays from 0 to 3 seconds in 0.1-second steps. Hover always reveals the orb; the Show dashboard on setting chooses whether a dwell on the orb expands the dashboard or only a click opens it. In both modes a click opens or closes the dashboard, and a click that closes it suppresses the dwell until the pointer leaves the orb. Changing behavior reschedules pending deadlines; reset-position and sleep/wake preserve the saved behavior.
 - The dwell timer stops if the pointer leaves or a drag starts.
 - The leave grace starts only outside the union of the orb, the panel, and the
   travel corridor between them.
@@ -435,7 +436,7 @@ The menu's **Settings…** action, the dashboard's gear button, and Command-comm
 
 - Launch at login reflects ServiceManagement's actual main-app registration status, reports errors, and links to Login Items when approval is needed. Opening settings never registers a login item.
 - The optional global shortcut shows/hides the companion. The recorder requires Command, Control, or Option; Escape cancels and Delete clears. Recording suspends the previous shortcut, restores it on cancellation, and reports registration failures. No shortcut is assigned by default.
-- Hover/click-only activation, expansion delay, retraction delay, and Reset Position are available in Companion. Click still pins; explicit shortcut dismissal stays hidden until the pointer leaves and reenters.
+- Hover/click dashboard opening, expansion delay, retraction delay, and Reset Position are available in Companion. Option-click or right-click on the orb pins, and VoiceOver exposes Pin/Unpin as a custom action; explicit shortcut dismissal stays hidden until the pointer leaves and reenters.
 - Live Usage remains off by default. Its menu and settings controls share one persisted value; the dashboard has no Live Usage control or footer, and shows the last refresh age in its header. Existing credential ownership and request gates are unchanged.
 - Account visibility is shared with inline dashboard hide/restore controls. Settings reorders accounts by dragging, with context-menu and accessibility move actions. The saved order applies globally, including interleaved providers; consecutive provider runs get separate headings with unique row identities. Unknown/new accounts append; temporarily absent accounts retain their saved slots.
 - Compact summary is chosen per service: Automatic (the visible account in use, else the first visible one), one visible account of that service, or Off. Choosing an account affects only its service. A missing explicit selection shows that service as unknown instead of substituting another account. Hiding the selected account resets that service to Automatic.

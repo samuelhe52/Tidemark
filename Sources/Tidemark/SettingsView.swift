@@ -98,7 +98,7 @@ struct CompanionSettingsView: View {
     var body: some View {
         SettingsPane(height: 300) {
             Section {
-                Picker("Open on", selection: $settings.hoverToExpand) {
+                Picker("Show dashboard on", selection: $settings.hoverToExpand) {
                     Text("Hover").tag(true)
                     Text("Click").tag(false)
                 }
@@ -108,7 +108,9 @@ struct CompanionSettingsView: View {
                 }
                 delay("Retract after", value: $settings.retractionDelay)
             } footer: {
-                Text("Click the companion to pin it open. Press Escape or click it again to unpin.")
+                Text(
+                    "Hovering the screen edge always shows the orb. Option-click or right-click the orb to pin the dashboard open; do it again or press Escape to unpin."
+                )
             }
             Section {
                 LabeledContent("Position") {

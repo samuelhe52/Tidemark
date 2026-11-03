@@ -79,6 +79,7 @@ final class CompanionController: NSObject {
             return true
         }
         stage.orbHandle.clicked = { [weak self] in self?.send(.companionClicked) }
+        stage.orbHandle.pinToggled = { [weak self] in self?.send(.pinToggled) }
         stage.orbHandle.dragChanged = { [weak self] in self?.dragChanged(to: $0) }
         stage.orbHandle.dragEnded = { [weak self] in self?.dragEnded() }
         stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
@@ -105,7 +106,8 @@ final class CompanionController: NSObject {
             return event
         }
         // macOS delivers global key events only when input-monitoring access already permits it.
-        // Registration does not request that permission; orb click always provides an unpin path.
+        // Registration does not request that permission; clicking or Option-clicking the orb always
+        // provides an unpin path.
         escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return }
             Task { @MainActor in self?.send(.escape) }
@@ -195,7 +197,7 @@ final class CompanionController: NSObject {
 
     func showCompanion() {
         if anchor == nil { updatePlacement() }
-        if state.phase != .pinned { send(.companionClicked) }
+        if state.phase != .pinned { send(.pinToggled) }
         panel.orderFrontRegardless()
         reconcilePointer()
     }

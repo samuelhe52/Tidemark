@@ -29,11 +29,13 @@ final class CompanionPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Holds the orb. AppKit owns click/drag discrimination, so dragging never accidentally pins.
+/// Holds the orb. A click opens or closes the dashboard; Option-click or right-click toggles the pin.
+/// AppKit owns click/drag discrimination, so dragging never accidentally opens or pins.
 final class OrbHandleView: NSView {
     let orb = OrbView(
         frame: NSRect(x: 0, y: 0, width: CompanionLayout.orbDiameter, height: CompanionLayout.orbDiameter))
     var clicked: (() -> Void)?
+    var pinToggled: (() -> Void)?
     var dragChanged: ((CGPoint) -> Void)?
     var dragEnded: (() -> Void)?
     private var start: CGPoint?
@@ -46,6 +48,8 @@ final class OrbHandleView: NSView {
         addSubview(orb)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
+        setAccessibilityLabel(String(localized: "Tidemark"))
+        updatePinAction()
     }
 
     @available(*, unavailable)
@@ -55,8 +59,18 @@ final class OrbHandleView: NSView {
         get { orb.pinned }
         set {
             orb.pinned = newValue
-            setAccessibilityLabel(newValue ? String(localized: "Unpin Tidemark") : String(localized: "Pin Tidemark"))
+            updatePinAction()
         }
+    }
+
+    private func updatePinAction() {
+        let name = pinned ? String(localized: "Unpin Dashboard") : String(localized: "Pin Dashboard")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: name) { [weak self] in
+                self?.pinToggled?()
+                return true
+            }
+        ])
     }
 
     override func layout() {
@@ -87,8 +101,19 @@ final class OrbHandleView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard start != nil else { return }
         start = nil
-        if dragging { dragEnded?() } else { clicked?() }
+        if dragging {
+            dragEnded?()
+        } else if event.modifierFlags.contains(.option) {
+            pinToggled?()
+        } else {
+            clicked?()
+        }
         dragging = false
+    }
+    override func rightMouseDown(with event: NSEvent) {}
+    override func rightMouseUp(with event: NSEvent) {
+        guard !dragging, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        pinToggled?()
     }
     private static func screenPoint(for event: NSEvent) -> CGPoint {
         event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
