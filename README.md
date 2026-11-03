@@ -1,36 +1,59 @@
 <div align="center">
   <h1>Tidemark</h1>
 
-  <p>A macOS companion that lives at the screen's edge and shows your coding agents' quotas.</p>
+  <p>Claude Code and Codex quota, docked at the edge of your screen.</p>
 
   <p>
-    <img src="https://img.shields.io/badge/platform-macOS-34C759" alt="macOS app" />
+    <img src="https://img.shields.io/badge/platform-macOS_15+-34C759" alt="macOS 15+" />
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
   </p>
 
   <p><a href="README.zh-CN.md">简体中文</a></p>
+
+  <img src="docs/images/dashboard.png" width="428" alt="The Tidemark dashboard showing Claude Code and Codex quota and usage" />
 </div>
 
----
+## Overview
 
-Tidemark rests as a thin glow at the edge of your screen. Hover over it and an animated orb emerges with a summary; linger or click and it opens a panel with the quota left and the reset time for Claude Code and Codex. It reads quota observations those tools already write locally.
+Tidemark rests as a small glass tab on the edge of your screen. Hover to reveal an orb with a quota summary, click it to open the dashboard. It works on its own and is best alongside [CC Switch](https://github.com/farion1231/cc-switch).
 
-Tidemark is in early development. The first implementation includes the native companion, saved edge placement, and passive quota reads from Claude Code's cache (or an existing statusline tap) and Codex session logs. Old observations show their age; stale or expired quotas show as unknown.
+<p align="center">
+  <img src="docs/images/companion.gif" width="368" alt="The docked tab morphing into the orb with a quota summary" />
+</p>
 
-Click the orb to pin or unpin the dashboard, and drag it to move. Use **Show Companion** or **Reset Position** in the Tidemark menu to recover it. The orb artwork is provisional. CC Switch history, live quota requests, account management, and custom skins are planned.
+- Quota left and reset time for Claude Code and Codex, across every CC Switch Codex account.
+- Token usage and estimated cost from CC Switch's history.
+- Missing or stale data shows as unknown with its age, never as full.
 
-## Requirements
+## Install
 
-- macOS 15 or later
+Download the latest `.dmg` from [Releases](../../releases/latest) and drag Tidemark to Applications. Requires macOS 15 or later; macOS 26 gives you the Liquid Glass look.
 
-## Building
+## Use
+
+- **Click** the orb to open or close the dashboard. **Option-click** or **right-click** pins it.
+- **Drag** the orb to move it to another edge. If it goes missing, use **Show Companion** or **Reset Position** in the menu bar item.
+- Open Settings with <kbd>⌘</kbd><kbd>,</kbd> to set a global shortcut, choose which accounts appear, and change how quota and resets are displayed.
+
+## Data and privacy
+
+Tidemark reads `~/.claude`, `~/.codex`, and `~/.cc-switch` and never changes them, with one exception below. By default it makes no network requests.
+
+**Live Usage** (off by default) asks Claude and Codex for current quota using the sign-ins you already have. With it on, Tidemark may renew your CC Switch managed Codex accounts and save the rotated tokens back to `codex_oauth_auth.json`. Turn it off to use local readings only.
+
+Usage history and extra Codex accounts need CC Switch. Quota for Claude Code and your active Codex account also works without it.
+
+## Build
 
 ```sh
 make build   # build the app
 make run     # build and relaunch
 make test    # run engine and data tests
-make help    # list all targets
+make dmg     # signed, notarized DMG in build/release
+make release VERSION=x.y.z   # build and publish a GitHub release
 ```
+
+Release builds sign and notarize with the developer account signed in to Xcode.
 
 ## License
 
