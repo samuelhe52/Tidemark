@@ -176,7 +176,7 @@ extension MotionCurve {   // TidemarkAppearance/CompanionMotion.swift
 ## 3. Dashboard
 
 The panel shows, for each visible account, every quota window it reports: the percent remaining (or used, as chosen in Settings),
-the reset countdown (or local clock time, including the date on later days), and the source with its age (for example "statusline · 40 s ago").
+the reset countdown (or compact local clock time, including the date on other days and the year when it differs), and the source with its age (for example "statusline · 40 s ago").
 Below the quotas, CC Switch history shows tokens and an estimated API-equivalent
 cost, which is not a bill.
 

@@ -114,9 +114,19 @@ enum QuotaText {
     static func resetTime(_ date: Date, style: QuotaResetTimeStyle, now: Date) -> String {
         if style == .countdown { return String(localized: "Resets in \(duration(date.timeIntervalSince(now)))") }
         let format = DateFormatter()
-        format.timeStyle = .short
-        format.dateStyle = Calendar.current.isDate(date, inSameDayAs: now) ? .none : .short
-        return String(localized: "Resets at \(format.string(from: date))")
+        let calendar = Calendar.current
+        let template: String
+        if calendar.isDate(date, inSameDayAs: now) {
+            template = "jm"
+        } else if calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            && calendar.component(.era, from: date) == calendar.component(.era, from: now)
+        {
+            template = "MMMdjm"
+        } else {
+            template = "yMMMdjm"
+        }
+        format.setLocalizedDateFormatFromTemplate(template)
+        return format.string(from: date)
     }
 
     static func summary(_ services: [ServiceUsage], preferences: QuotaDisplayPreferences, now: Date) -> String {
