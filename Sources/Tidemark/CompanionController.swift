@@ -21,6 +21,10 @@ final class CompanionController: NSObject {
     private var refreshedAt: Date?
     private var refreshTask: Task<Void, Never>?
     private var refreshAgain = false
+    private let historyReader = UsageHistoryReader(environment: .current)
+    private var history: DashboardView.History
+    private var historyTask: Task<Void, Never>?
+    private var historyAgain = false
     private var placement: DockPlacement?
     private var anchor: DockAnchor?
     private var deadlineTimer: Timer?
@@ -41,10 +45,15 @@ final class CompanionController: NSObject {
     private var layoutGeneration = 0
 
     private static let liveDefaultsKey = "liveUsageEnabled"
+    private static let historyRangeKey = "usageHistoryRange"
+    private static let historyViewKey = "usageHistoryView"
 
     override init() {
         liveEnabled = UserDefaults.standard.bool(forKey: Self.liveDefaultsKey)
         usageService = UsageService(liveEnabled: liveEnabled)
+        let range = UserDefaults.standard.string(forKey: Self.historyRangeKey).flatMap(UsageHistoryRange.init)
+        let view = UserDefaults.standard.string(forKey: Self.historyViewKey).flatMap(DashboardView.HistoryView.init)
+        history = DashboardView.History(range: range ?? .today, view: view ?? .chart)
         super.init()
     }
 
@@ -68,6 +77,8 @@ final class CompanionController: NSObject {
         stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
         stage.dashboard.onLiveChanged = { [weak self] in self?.setLiveEnabled($0) }
         stage.dashboard.onVisibilityChanged = { [weak self] in self?.renderUsage(animated: true) }
+        stage.dashboard.onHistoryRangeChanged = { [weak self] in self?.setHistoryRange($0) }
+        stage.dashboard.onHistoryViewChanged = { [weak self] in self?.setHistoryView($0) }
         panel.contentView = stage
         renderUsage()
         updatePlacement()
@@ -127,6 +138,7 @@ final class CompanionController: NSObject {
         localMonitor = nil
         escapeMonitor = nil
         refreshTask?.cancel()
+        historyTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -200,6 +212,7 @@ final class CompanionController: NSObject {
     }
 
     func refresh(userInitiated: Bool) {
+        refreshHistory()
         guard refreshTask == nil else {
             refreshAgain = refreshAgain || userInitiated
             return
@@ -218,6 +231,53 @@ final class CompanionController: NSObject {
             }
         }
         renderUsage()
+    }
+
+    // MARK: - History
+
+    private func setHistoryRange(_ range: UsageHistoryRange) {
+        guard range != history.range else { return }
+        UserDefaults.standard.set(range.rawValue, forKey: Self.historyRangeKey)
+        history.range = range
+        history.issue = nil
+        // The picker already shows the new range; the rows change once its figures arrive.
+        refreshHistory()
+    }
+
+    private func setHistoryView(_ view: DashboardView.HistoryView) {
+        guard view != history.view else { return }
+        UserDefaults.standard.set(view.rawValue, forKey: Self.historyViewKey)
+        history.view = view
+        renderUsage(animated: true)
+    }
+
+    /// Reads CC Switch's database off the main actor; concurrent requests coalesce into one rerun.
+    private func refreshHistory() {
+        guard historyTask == nil else {
+            historyAgain = true
+            return
+        }
+        let range = history.range
+        historyTask = Task { [weak self, historyReader] in
+            let result = await Task.detached(priority: .utility) { historyReader.read(range, now: Date()) }.value
+            guard let self, !Task.isCancelled else { return }
+            self.historyTask = nil
+            if range == self.history.range {
+                switch result {
+                case .success(let usage):
+                    self.history.usage = usage
+                    self.history.issue = nil
+                case .failure(let issue):
+                    // Keep the last good figures for this range beside the issue.
+                    self.history.issue = issue
+                }
+                self.renderUsage(animated: true)
+            }
+            if self.historyAgain {
+                self.historyAgain = false
+                self.refreshHistory()
+            }
+        }
     }
 
     // MARK: - Presentation
@@ -259,7 +319,8 @@ final class CompanionController: NSObject {
         let now = Date()
         stage.summary.update(text: QuotaText.summary(usage, now: now))
         stage.dashboard.update(
-            usage, liveEnabled: liveEnabled, refreshing: refreshTask != nil, refreshedAt: refreshedAt, now: now)
+            usage, history: history, liveEnabled: liveEnabled, refreshing: refreshTask != nil, refreshedAt: refreshedAt,
+            now: now)
         applyLayout(transition: transition)
     }
 
