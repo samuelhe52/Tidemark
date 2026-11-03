@@ -288,7 +288,7 @@ final class CompanionController: NSObject {
         presentationGeneration += 1
         let generation = presentationGeneration
         if state.phase != .hidden, panelShowsStrip {
-            // Grow first: the glow keeps its screen position, so the change is invisible.
+            // Grow first: the docked orb keeps its screen position, so the change is invisible.
             panelShowsStrip = false
             panel.setFrame(layout.frame, display: false)
             stage.place(layout, in: layout.frame)

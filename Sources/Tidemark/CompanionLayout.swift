@@ -12,6 +12,9 @@ import TidemarkEngine
 struct CompanionLayout {
     static let orbDiameter: CGFloat = 44
     static let dashboardCornerRadius: CGFloat = 18
+    /// The docked tab: how far it shows from the edge, and how long it runs along it.
+    static let dockDepth: CGFloat = 8
+    static let dockLength: CGFloat = 48
 
     let edge: DockEdge
     let screen: CGRect
@@ -20,7 +23,8 @@ struct CompanionLayout {
     let dashboard: CGRect
     let summary: CGRect
     let strip: CGRect
-    let glow: CGRect
+    /// The orb's glass while hidden: a capsule centered on the screen edge, so only half shows.
+    let dock: CGRect
     let corridor: CGRect
 
     /// The tallest dashboard that fits beside the orb. On the top and bottom edges the orb takes
@@ -78,20 +82,25 @@ struct CompanionLayout {
         let summary = beside(summarySize, centeredOn: center)
         self.summary = summary
 
-        let pill: CGRect
-        let hover: CGRect
+        // The hover strip covers the visible half of the dock with a little to spare.
+        let depth = Self.dockDepth
+        let length = Self.dockLength
+        let stripDepth = depth + 2
+        let stripLength: CGFloat = 64
         switch edge {
         case .left, .right:
-            let x = edge == .left ? screen.minX : screen.maxX - 4
-            pill = CGRect(x: x, y: anchor.point.y - 22, width: 4, height: 44)
-            hover = CGRect(x: edge == .left ? x : x - 4, y: anchor.point.y - 32, width: 8, height: 64)
+            let x = edge == .left ? screen.minX : screen.maxX
+            dock = CGRect(x: x - depth, y: anchor.point.y - length / 2, width: depth * 2, height: length)
+            strip = CGRect(
+                x: edge == .left ? x : x - stripDepth, y: anchor.point.y - stripLength / 2, width: stripDepth,
+                height: stripLength)
         case .top, .bottom:
-            let y = edge == .bottom ? screen.minY : screen.maxY - 4
-            pill = CGRect(x: anchor.point.x - 22, y: y, width: 44, height: 4)
-            hover = CGRect(x: anchor.point.x - 32, y: edge == .bottom ? y : y - 4, width: 64, height: 8)
+            let y = edge == .bottom ? screen.minY : screen.maxY
+            dock = CGRect(x: anchor.point.x - length / 2, y: y - depth, width: length, height: depth * 2)
+            strip = CGRect(
+                x: anchor.point.x - stripLength / 2, y: edge == .bottom ? y : y - stripDepth, width: stripLength,
+                height: stripDepth)
         }
-        glow = pill
-        strip = hover
         switch edge {
         case .left, .right:
             corridor = CGRect(
@@ -102,24 +111,14 @@ struct CompanionLayout {
                 x: center.x - 22, y: min(orb.midY, dashboard.midY),
                 width: 44, height: abs(orb.midY - dashboard.midY))
         }
-        // The orb's tucked pose sits on the edge, so the frame must reach it.
-        frame = orb.union(dashboard).union(summary).union(hover).union(pill)
+        // The strip holds the dock's visible half, so the frame reaches the orb's resting shape.
+        frame = orb.union(dashboard).union(summary).union(strip)
             .insetBy(dx: -10, dy: -10).intersection(screen)
     }
 
     /// Converts a global rectangle into the coordinates of a view filling `container`.
     func local(_ rect: CGRect, in container: CGRect) -> CGRect {
         rect.offsetBy(dx: -container.minX, dy: -container.minY)
-    }
-
-    /// The vector that carries the orb's center onto the screen edge.
-    var tuckOffset: CGVector {
-        switch edge {
-        case .left: CGVector(dx: screen.minX - orb.midX, dy: 0)
-        case .right: CGVector(dx: screen.maxX - orb.midX, dy: 0)
-        case .top: CGVector(dx: 0, dy: screen.maxY - orb.midY)
-        case .bottom: CGVector(dx: 0, dy: screen.minY - orb.midY)
-        }
     }
 
     func onOrb(_ point: CGPoint) -> Bool {

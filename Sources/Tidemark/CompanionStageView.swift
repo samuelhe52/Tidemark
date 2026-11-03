@@ -9,12 +9,12 @@ import AppKit
 import TidemarkAppearance
 import TidemarkEngine
 
-/// The panel's content: the edge glow, the orb, the summary capsule and the dashboard.
+/// The panel's content: the orb, the summary capsule and the dashboard.
 ///
-/// Every transition animates only layer `transform` and `opacity`, so Core Animation composites it
-/// in the render server. Window frames never change during a transition.
+/// The summary and dashboard animate only layer `transform` and `opacity`, so Core Animation composites
+/// them in the render server. The orb never hides: while hidden its glass docks as a tab on the screen
+/// edge and morphs back into the sphere. Window frames never change during a transition.
 final class CompanionStageView: NSView {
-    let glow = EdgeGlowView(frame: .zero)
     let orbHandle = OrbHandleView(frame: .zero)
     let summary = SummaryView(frame: .zero)
     let dashboard = DashboardView(frame: .zero)
@@ -26,12 +26,15 @@ final class CompanionStageView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        for view in [glow, dashboard, summary, orbHandle] as [NSView] {
+        for view in [dashboard, summary, orbHandle] as [NSView] {
             view.wantsLayer = true
-            view.isHidden = view !== glow
-            view.layer?.opacity = view === glow ? 1 : 0
             addSubview(view)
         }
+        for element in Element.allCases {
+            view(element).isHidden = true
+            view(element).layer?.opacity = 0
+        }
+        orbHandle.orb.setDocked(true, curve: nil) {}
     }
 
     @available(*, unavailable)
@@ -41,11 +44,12 @@ final class CompanionStageView: NSView {
     func place(_ layout: CompanionLayout, in container: CGRect) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        glow.frame = layout.local(layout.glow, in: container)
         orbHandle.frame = layout.local(layout.orb, in: container)
+        // Relative to the orb, so an in-flight morph survives the panel changing size.
+        orbHandle.orb.dockedFrame = layout.dock.offsetBy(dx: -layout.orb.minX, dy: -layout.orb.minY)
         summary.frame = layout.local(layout.summary, in: container)
         dashboard.frame = layout.local(layout.dashboard, in: container)
-        for view in [glow, orbHandle, summary, dashboard] as [NSView] { view.layoutSubtreeIfNeeded() }
+        for view in [orbHandle, summary, dashboard] as [NSView] { view.layoutSubtreeIfNeeded() }
         // A hidden element keeps the resting pose that matches the current geometry.
         for element in Element.allCases where view(element).isHidden {
             view(element).layer?.move(to: restingPose(element, layout: layout, reduced: false), curve: nil)
@@ -61,10 +65,25 @@ final class CompanionStageView: NSView {
         let reduced =
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             || ProcessInfo.processInfo.isLowPowerModeEnabled
-        orbHandle.orb.idleMotion = phase != .hidden && phase != .dragging && !reduced
-        let wasHidden = orbHandle.isHidden
+        let orb = orbHandle.orb
+        let wasDocked = orb.docked
+        let docked = phase == .hidden
+        // Both the morph and the other elements' motion must settle before `completion`.
+        var pending = 2
+        let settle = {
+            pending -= 1
+            if pending == 0 { completion?() }
+        }
+        if docked == wasDocked {
+            settle()
+        } else {
+            // Content collapses into the orb before the orb melts into the edge.
+            let curve: MotionCurve? = !animated || reduced ? nil : docked ? .retract : .emerge
+            orb.setDocked(docked, curve: curve, delay: docked ? 0.1 : 0, completion: settle)
+        }
+        orb.idleMotion = !docked && phase != .dragging && !reduced
         CATransaction.begin()
-        CATransaction.setCompletionBlock(completion)
+        CATransaction.setCompletionBlock(settle)
         for element in Element.allCases {
             let visible = element.isVisible(in: phase)
             let target = view(element)
@@ -75,18 +94,11 @@ final class CompanionStageView: NSView {
                 curve = nil
             } else if reduced {
                 curve = MotionCurve(response: 0.3, bounce: 0)
+            } else if visible {
+                curve = .expand
+                if element == .summary, wasDocked { delay = 0.08 }
             } else {
-                switch (element, visible) {
-                case (.orb, true): curve = .emerge
-                case (.summary, true):
-                    curve = .expand
-                    if wasHidden { delay = 0.08 }
-                case (.dashboard, true): curve = .expand
-                case (.glow, true):
-                    curve = .retract
-                    delay = 0.12
-                default: curve = .retract
-                }
+                curve = .retract
             }
             if visible {
                 if target.isHidden {
@@ -109,12 +121,10 @@ final class CompanionStageView: NSView {
     // MARK: - Poses
 
     private enum Element: CaseIterable {
-        case glow, orb, summary, dashboard
+        case summary, dashboard
 
         func isVisible(in phase: CompanionPhase) -> Bool {
             switch self {
-            case .glow: phase == .hidden
-            case .orb: phase != .hidden
             case .summary: phase == .revealed
             case .dashboard: phase == .expanded || phase == .pinned
             }
@@ -123,8 +133,6 @@ final class CompanionStageView: NSView {
 
     private func view(_ element: Element) -> NSView {
         switch element {
-        case .glow: glow
-        case .orb: orbHandle
         case .summary: summary
         case .dashboard: dashboard
         }
@@ -136,12 +144,6 @@ final class CompanionStageView: NSView {
             return LayerPose(opacity: 0, transform: CATransform3DIdentity)
         }
         switch element {
-        case .glow:
-            return LayerPose(opacity: 0, transform: CATransform3DIdentity)
-        case .orb:
-            // Tucked into the edge it came from, half size.
-            let center = CGPoint(x: layer.bounds.midX, y: layer.bounds.midY)
-            return .scaled(0.5, about: center, offset: layout.tuckOffset, opacity: 0, in: layer)
         case .summary:
             return .scaled(0.9, about: pivot(toward: layout.orb, in: layout.summary), opacity: 0, in: layer)
         case .dashboard:

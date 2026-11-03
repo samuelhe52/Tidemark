@@ -6,16 +6,34 @@
 //
 
 import AppKit
+import SwiftUI
 
 /// A small glass sphere with a quiet highlight and a shaded lower rim.
 ///
 /// Receives presentation values, never engine or usage objects. Idle breathing is a Core Animation
-/// loop, so it costs the main thread nothing while it runs.
+/// loop, so it costs the main thread nothing while it runs. While docked, the same glass reshapes into
+/// a plain glass tab against the screen edge.
 public final class OrbView: NSView {
     private let body = NSView()
     private let surface: GlassSurfaceView
     private let lighting = SphereLightingView()
     private let symbol = NSImageView()
+    /// The body frame the last `applyShape` targeted. Every step of a morph resizes the body, which
+    /// asks this view for layout; comparing targets keeps `layout()` from snapping the morph to its end.
+    private var shapeTarget: CGRect?
+    /// The body size the breathing loop's pivot was computed for.
+    private var breathingSize: CGSize?
+    /// The shape the glass shows or is morphing toward. It trails `docked` while a delayed morph waits.
+    private var shapeDocked = false
+    private var morphGeneration = 0
+    /// The completion of a delayed morph that has not started yet.
+    private var pendingCompletion: (() -> Void)?
+    public private(set) var docked = false
+
+    /// Where the glass rests while docked, in this view's coordinates; usually outside its bounds.
+    public var dockedFrame: CGRect = .zero {
+        didSet { if dockedFrame != oldValue { needsLayout = true } }
+    }
 
     public var pinned = false {
         didSet { if pinned != oldValue { updateSymbol() } }
@@ -31,12 +49,15 @@ public final class OrbView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         body.wantsLayer = true
+        // Autoresizing, not `layout()`, sizes the body's subviews, so they follow an animated frame.
+        body.autoresizesSubviews = true
+        surface.autoresizingMask = [.width, .height]
         body.addSubview(surface)
-        lighting.autoresizingMask = [.width, .height]
-        surface.contentView.addSubview(lighting)
+        for view in [lighting, symbol] as [NSView] {
+            view.autoresizingMask = [.width, .height]
+            surface.contentView.addSubview(view)
+        }
         symbol.imageScaling = .scaleNone
-        symbol.autoresizingMask = [.width, .height]
-        surface.contentView.addSubview(symbol)
         addSubview(body)
         updateSymbol()
     }
@@ -46,12 +67,67 @@ public final class OrbView: NSView {
 
     public override func layout() {
         super.layout()
-        body.frame = bounds
-        surface.frame = body.bounds
+        // Only a geometry change re-applies the shape; an in-flight morph also lands here every frame.
+        if shapeTarget != currentTarget { applyShape() }
+        // The system clamps the orb's radius into a capsule for the thin tab, so one radius serves both.
         surface.cornerRadius = bounds.height / 2
-        lighting.frame = surface.contentView.bounds
-        symbol.frame = surface.contentView.bounds
-        updateBreathing()
+        if idleMotion, body.bounds.size != breathingSize { updateBreathing() }
+    }
+
+    /// Reshapes the glass into the docked tab or back into the sphere, continuing from what is on
+    /// screen. `curve == nil` changes it at once. `completion` also runs when a later call replaces
+    /// this one.
+    public func setDocked(
+        _ docked: Bool, curve: MotionCurve?, delay: TimeInterval = 0, completion: @escaping () -> Void
+    ) {
+        self.docked = docked
+        morphGeneration += 1
+        // A replaced morph that never started reports back too, like one replaced in flight.
+        if let replaced = pendingCompletion {
+            pendingCompletion = nil
+            replaced()
+        }
+        guard let curve, delay > 0 else {
+            morph(curve: curve, completion: completion)
+            return
+        }
+        // Wait here rather than with `Animation.delay`: a delayed SwiftUI animation that replaces one in
+        // flight first jumps to the old target. Waiting lets the current morph run on, then turn around.
+        let generation = morphGeneration
+        pendingCompletion = completion
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, generation == self.morphGeneration, let completion = self.pendingCompletion else { return }
+            self.pendingCompletion = nil
+            self.morph(curve: curve, completion: completion)
+        }
+    }
+
+    private func morph(curve: MotionCurve?, completion: @escaping () -> Void) {
+        shapeDocked = docked
+        guard let curve else {
+            applyShape()
+            completion()
+            return
+        }
+        // Opacity never springs: overshooting a fade reads as a flicker.
+        NSAnimationContext.animate(.easeInOut(duration: min(curve.response * 0.55, 0.22))) { applyLighting() }
+        NSAnimationContext.animate(
+            .spring(duration: curve.response, bounce: curve.bounce), changes: { applyShape(lighting: false) },
+            completion: completion)
+    }
+
+    private var currentTarget: CGRect { shapeDocked ? dockedFrame : bounds }
+
+    private func applyShape(lighting: Bool = true) {
+        let target = currentTarget
+        shapeTarget = target
+        if body.frame != target { body.frame = target }
+        if lighting { applyLighting() }
+    }
+
+    /// The sphere's lighting would read as a misplaced highlight on the flat tab, so it fades out.
+    private func applyLighting() {
+        lighting.alphaValue = shapeDocked ? 0 : 1
     }
 
     private func updateSymbol() {
@@ -65,7 +141,10 @@ public final class OrbView: NSView {
     private func updateBreathing() {
         guard let layer = body.layer else { return }
         layer.removeAnimation(forKey: "idle")
-        guard idleMotion, bounds.width > 0 else { return }
+        breathingSize = nil
+        guard idleMotion, body.bounds.width > 0 else { return }
+        // The pivot is the body's own center, so the loop is rebuilt whenever the body changes size.
+        breathingSize = body.bounds.size
         let center = CGPoint(x: layer.bounds.midX, y: layer.bounds.midY)
         let breath = CABasicAnimation(keyPath: "transform")
         breath.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
@@ -120,28 +199,5 @@ fileprivate final class SphereLightingView: NSView {
         path.appendOval(in: rect.insetBy(dx: 0.75, dy: 0.75))
         path.windingRule = .evenOdd
         return path
-    }
-}
-
-/// The resting state: a thin accent-colored pill against the screen edge.
-public final class EdgeGlowView: NSView {
-    public override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
-
-    public override var wantsUpdateLayer: Bool { true }
-
-    public override func updateLayer() {
-        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
-        layer?.cornerRadius = min(bounds.width, bounds.height) / 2
-    }
-
-    public override func layout() {
-        super.layout()
-        needsDisplay = true
     }
 }

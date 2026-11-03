@@ -24,6 +24,7 @@ public final class GlassSurfaceView: NSView {
 
     public let contentView = NSView()
     private let material: NSView
+    private var maskRadius: CGFloat = 0
 
     public var cornerRadius: CGFloat {
         didSet { if cornerRadius != oldValue { applyCornerRadius() } }
@@ -62,14 +63,22 @@ public final class GlassSurfaceView: NSView {
     public override func layout() {
         super.layout()
         material.frame = bounds
-        if material is NSVisualEffectView { contentView.frame = material.bounds }
+        if material is NSVisualEffectView {
+            contentView.frame = material.bounds
+            applyCornerRadius()
+        }
     }
 
     private func applyCornerRadius() {
         if #available(macOS 26, *), let glass = material as? NSGlassEffectView {
             glass.cornerRadius = cornerRadius
         } else if let effect = material as? NSVisualEffectView {
-            effect.maskImage = Self.mask(radius: cornerRadius)
+            // Glass clamps an oversized radius into a capsule; the mask does the same.
+            let radius = min(cornerRadius, min(bounds.width, bounds.height) / 2)
+            if effect.maskImage == nil || maskRadius != radius {
+                maskRadius = radius
+                effect.maskImage = Self.mask(radius: radius)
+            }
         }
     }
 
