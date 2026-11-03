@@ -116,6 +116,22 @@ enum QuotaText {
 
     static func resetTime(_ date: Date, style: QuotaResetTimeStyle, now: Date) -> String {
         if style == .countdown { return String(localized: "Resets in \(duration(date.timeIntervalSince(now)))") }
+        return clockTime(date, now: now)
+    }
+
+    /// A one-line heads-up for the weekly window that will run out first at the current pace, if any.
+    static func paceWarning(_ account: AccountUsage, style: QuotaResetTimeStyle, now: Date) -> String? {
+        let soonest = account.windows.filter(\.isWeekly)
+            .compactMap { window in window.projectedExhaustion(at: now).map { (window, $0) } }
+            .min { $0.1 < $1.1 }
+        guard let (window, date) = soonest else { return nil }
+        let name = windowName(window)
+        return style == .countdown
+            ? String(localized: "Heads up: at this pace, \(name) runs out in \(duration(date.timeIntervalSince(now)))")
+            : String(localized: "Heads up: at this pace, \(name) runs out \(clockTime(date, now: now))")
+    }
+
+    private static func clockTime(_ date: Date, now: Date) -> String {
         let format = DateFormatter()
         let calendar = Calendar.current
         let template: String

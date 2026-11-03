@@ -66,6 +66,7 @@ final class DashboardView: NSView {
         case service(String)
         case account(String)
         case windows(String, [String])
+        case pace(String)
         case status(String)
         case hidden(String)
         case requestLogs
@@ -322,10 +323,11 @@ final class DashboardView: NSView {
         let singleVisible = single
         let name = QuotaText.serviceName(service.service)
         let planName = QuotaText.plan(singleVisible?.plan) ?? ""
+        let singlePace = single.flatMap { QuotaText.paceWarning($0, style: preferences.resetTimeStyle, now: now) }
         append(
             .service(sectionID),
             state: [name, planName, singleVisible?.id ?? "", singleVisible?.email ?? ""],
-            spacingAfter: multipleAccounts || single?.windows.isEmpty == false ? 6 : nil,
+            spacingAfter: singlePace != nil ? 0 : multipleAccounts || single?.windows.isEmpty == false ? 6 : nil,
             previous: previous
         ) {
             let title = Self.label(name, size: 13, weight: .semibold)
@@ -335,12 +337,23 @@ final class DashboardView: NSView {
             return row
         }
         for account in service.accounts {
+            let pace =
+                single == nil ? QuotaText.paceWarning(account, style: preferences.resetTimeStyle, now: now) : singlePace
             if single == nil {
                 append(
                     .account(account.id), state: [account.email ?? "", account.plan ?? "", String(account.isActive)],
-                    spacingAfter: account.windows.isEmpty ? nil : 6,
+                    spacingAfter: pace != nil ? 0 : account.windows.isEmpty ? nil : 6,
                     previous: previous
                 ) { accountHeader(account) }
+            }
+            if let pace {
+                append(.pace(account.id), state: pace, spacingAfter: 6, previous: previous) {
+                    let label = CompanionLabel(wrappingLabelWithString: pace)
+                    label.font = .systemFont(ofSize: 10, weight: .medium)
+                    label.textColor = .systemOrange
+                    Self.describe(label, pace)
+                    return label
+                }
             }
             for start in stride(from: 0, to: account.windows.count, by: 2) {
                 let windows = account.windows[start..<min(start + 2, account.windows.count)]

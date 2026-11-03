@@ -80,6 +80,33 @@ extension QuotaWindow {
     }
 }
 
+extension QuotaWindow {
+    /// Shortest stretch of a window that says anything about its pace; earlier readings swing wildly.
+    static let minimumPaceElapsed: TimeInterval = 3600
+
+    /// Whether this is a weekly window, overall or for one model.
+    public var isWeekly: Bool { id == Self.sevenDayID || weeklyModel != nil }
+
+    /// When the window runs out if usage continues at its average pace since the window opened.
+    ///
+    /// Nil unless the reading is current, the window has a known length and reset, enough of it has
+    /// elapsed to judge, something was used, and the projected moment falls before the reset.
+    /// The pace is measured at the observation, so an aging reading does not skew it.
+    public func projectedExhaustion(at now: Date) -> Date? {
+        switch freshness(at: now) {
+        case .current, .aging: break
+        case .stale, .expired, .unknown: return nil
+        }
+        guard let usedPercent, usedPercent > 0, usedPercent < 100, let resetsAt, let duration, duration > 0 else {
+            return nil
+        }
+        let elapsed = observedAt.timeIntervalSince(resetsAt.addingTimeInterval(-duration))
+        guard elapsed >= Self.minimumPaceElapsed else { return nil }
+        let exhaustion = observedAt.addingTimeInterval(elapsed * (100 - usedPercent) / usedPercent)
+        return exhaustion > now && exhaustion < resetsAt ? exhaustion : nil
+    }
+}
+
 public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     /// Passive file states.
     case missing, unreadable, unrecognized
