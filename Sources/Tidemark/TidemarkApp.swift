@@ -61,7 +61,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
+        // Window key equivalents such as Command-W only reach the settings window through menu items.
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: String(localized: "Window"))
+        windowMenu.addItem(
+            withTitle: String(localized: "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m")
+        windowMenu.addItem(
+            withTitle: String(localized: "Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
         NSApp.mainMenu = mainMenu
+        NSApp.windowsMenu = windowMenu
         companion.openSettings = { [weak self] in self?.settingsWindow.show() }
         shortcut.onPressed = { [weak self] in self?.companion.toggleCompanion() }
         shortcut.start()
