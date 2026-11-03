@@ -151,16 +151,16 @@ final class DashboardView: NSView {
             self.outgoingViews = []
             completion()
         }
-        if !reduced { move(surface, from: previous.surface, duration: duration) }
+        if !reduced { move(surface, from: previous.surface, duration: duration, scales: true) }
         for (view, frame) in previous.chrome where !reduced { move(view, from: frame, duration: duration) }
         for (id, row) in rows {
             if let frame = previous.frames[id], !reduced { move(row.view, from: frame, duration: duration) }
             let changed = previous.rows[id].map { $0.motionState != row.motionState } ?? true
             if changed, let rowLayer = row.view.layer {
-                fade(rowLayer, from: 0, to: 1, duration: duration)
+                fade(rowLayer, appearing: true, duration: duration)
                 if !reduced, previous.frames[id] == nil {
                     let dy: CGFloat = row.view.superview?.isFlipped == true ? 6 : -6
-                    slide(rowLayer, from: dy, to: 0, duration: duration)
+                    slide(rowLayer, from: CGPoint(x: 0, y: dy), to: .zero, duration: duration)
                 }
             }
         }
@@ -169,6 +169,11 @@ final class DashboardView: NSView {
             guard changed, let frame = previous.frames[id], rows[id]?.view !== row.view else { continue }
             let visible = frame.intersection(previous.viewport)
             guard !visible.isNull, visible.width > 0, visible.height > 0 else { continue }
+            // A replaced row travels with its successor so the two never separate into a ghost; a
+            // removed row lifts away.
+            let offset =
+                rows[id].map { offset(from: frame, to: screenFrame($0.view, model: true)) }
+                ?? CGPoint(x: 0, y: isFlipped ? -6 : 6)
             // Retain the actual outgoing row. Native controls can overhang their alignment
             // rect, so clip the visible intersection instead of skipping the exit entirely.
             let overlay = OutgoingContentView(frame: convert(window.convertFromScreen(visible), from: nil))
@@ -185,32 +190,46 @@ final class DashboardView: NSView {
             outgoingViews.append(overlay)
             guard let outgoing = overlay.layer else { continue }
             outgoing.opacity = 0
-            fade(outgoing, from: 1, to: 0, duration: duration)
+            fade(outgoing, appearing: false, duration: duration)
             if !reduced {
-                let dy: CGFloat = isFlipped ? -6 : 6
-                outgoing.transform = CATransform3DMakeTranslation(0, dy, 0)
-                slide(outgoing, from: 0, to: dy, duration: duration)
+                outgoing.transform = CATransform3DMakeTranslation(offset.x, offset.y, 0)
+                slide(outgoing, from: .zero, to: offset, duration: duration)
             }
         }
         CATransaction.commit()
     }
 
-    private func screenFrame(_ view: NSView) -> CGRect {
+    private func screenFrame(_ view: NSView, model: Bool = false) -> CGRect {
         guard let window, let parent = view.superview else { return .zero }
-        let rect = view.layer?.presentation()?.frame ?? view.frame
+        let rect = model ? view.frame : view.layer?.presentation()?.frame ?? view.frame
         return window.convertToScreen(parent.convert(rect, to: nil))
     }
 
-    private func move(_ view: NSView, from previous: CGRect, duration: CFTimeInterval) {
+    /// How far this view's coordinates carry content from one screen rect's top-leading corner to another's.
+    private func offset(from old: CGRect, to new: CGRect) -> CGPoint {
+        // Screen coordinates rise upward; flipped views measure downward.
+        CGPoint(x: new.minX - old.minX, y: isFlipped ? old.maxY - new.maxY : new.maxY - old.maxY)
+    }
+
+    /// Animates `view` from its old screen rect to its current frame. Rows only translate, top edge to
+    /// top edge, so their text never stretches; the glass surface also scales.
+    private func move(_ view: NSView, from previous: CGRect, duration: CFTimeInterval, scales: Bool = false) {
         guard let window, let parent = view.superview, let layer = view.layer else { return }
         let target = view.frame
         let old = parent.convert(window.convertFromScreen(previous), from: nil)
         guard target.width > 0, target.height > 0, old != target else { return }
-        let anchor = layer.anchorPoint
-        let dx = old.minX + old.width * anchor.x - target.minX - target.width * anchor.x
-        let dy = old.minY + old.height * anchor.y - target.minY - target.height * anchor.y
-        let transform = CATransform3DScale(
-            CATransform3DMakeTranslation(dx, dy, 0), old.width / target.width, old.height / target.height, 1)
+        let transform: CATransform3D
+        if scales {
+            let anchor = layer.anchorPoint
+            let dx = old.minX + old.width * anchor.x - target.minX - target.width * anchor.x
+            let dy = old.minY + old.height * anchor.y - target.minY - target.height * anchor.y
+            transform = CATransform3DScale(
+                CATransform3DMakeTranslation(dx, dy, 0), old.width / target.width, old.height / target.height, 1)
+        } else {
+            let dy = parent.isFlipped ? old.minY - target.minY : old.maxY - target.maxY
+            guard old.minX != target.minX || dy != 0 else { return }
+            transform = CATransform3DMakeTranslation(old.minX - target.minX, dy, 0)
+        }
         let animation = CABasicAnimation(keyPath: "transform")
         animation.fromValue = NSValue(caTransform3D: transform)
         animation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
@@ -219,19 +238,23 @@ final class DashboardView: NSView {
         layer.add(animation, forKey: "content.transform")
     }
 
-    private func fade(_ layer: CALayer, from: Float, to: Float, duration: CFTimeInterval) {
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = from
-        animation.toValue = to
+    /// Staggered so outgoing and incoming text are barely visible together; a plain crossfade shows
+    /// both at half strength halfway through.
+    private func fade(_ layer: CALayer, appearing: Bool, duration: CFTimeInterval) {
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        animation.values = appearing ? [0, 0, 1] : [1, 0, 0]
+        animation.keyTimes = appearing ? [0, 0.4, 1] : [0, 0.6, 1]
         animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.timingFunctions = [
+            CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .easeInEaseOut)
+        ]
         layer.add(animation, forKey: "content.opacity")
     }
 
-    private func slide(_ layer: CALayer, from: CGFloat, to: CGFloat, duration: CFTimeInterval) {
+    private func slide(_ layer: CALayer, from: CGPoint, to: CGPoint, duration: CFTimeInterval) {
         let animation = CABasicAnimation(keyPath: "transform")
-        animation.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(0, from, 0))
-        animation.toValue = NSValue(caTransform3D: CATransform3DMakeTranslation(0, to, 0))
+        animation.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(from.x, from.y, 0))
+        animation.toValue = NSValue(caTransform3D: CATransform3DMakeTranslation(to.x, to.y, 0))
         animation.duration = duration
         animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         layer.add(animation, forKey: "content.transform")
@@ -464,12 +487,15 @@ final class DashboardView: NSView {
 
     private func appendHistory(_ history: History, now: Date, previous: [RowID: ContentRow]) {
         let rangeName = HistoryText.range(history.range)
-        append(.historyHeader, state: [history.range.rawValue, history.view.rawValue], previous: previous) {
-            let controls = NSStackView(views: [viewPicker(history.view), rangePicker(history.range)])
+        // The header outlives selection changes: rebuilding it would crossfade the control being clicked.
+        append(.historyHeader, state: [], previous: previous) {
+            let controls = NSStackView(views: [historyViewPicker, historyRangePicker])
             controls.spacing = 4
             controls.alignment = .centerY
             return Self.row(Self.label(String(localized: "Usage"), size: 13, weight: .semibold), controls)
         }
+        historyViewPicker.selectedSegment = HistoryView.allCases.firstIndex(of: history.view) ?? 0
+        historyRangePicker.selectItem(at: UsageHistoryRange.allCases.firstIndex(of: history.range) ?? 0)
         // Figures for another range never stand in for the chosen one.
         let usage = history.usage.flatMap { $0.range == history.range ? $0 : nil }
         if let usage, !usage.apps.isEmpty {
@@ -557,7 +583,7 @@ final class DashboardView: NSView {
         return rows
     }
 
-    private func viewPicker(_ selected: HistoryView) -> NSView {
+    private lazy var historyViewPicker: NSSegmentedControl = {
         let views = HistoryView.allCases
         let control = NSSegmentedControl()
         control.segmentCount = views.count
@@ -573,14 +599,13 @@ final class DashboardView: NSView {
             control.setToolTip(name, forSegment: index)
             control.setWidth(24, forSegment: index)
         }
-        control.selectedSegment = views.firstIndex(of: selected) ?? 0
         control.target = self
         control.action = #selector(historyViewChosen(_:))
         control.setAccessibilityLabel(String(localized: "Usage breakdown"))
         return control
-    }
+    }()
 
-    private func rangePicker(_ selected: UsageHistoryRange) -> NSView {
+    private lazy var historyRangePicker: NSPopUpButton = {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
         button.bezelStyle = .accessoryBarAction
         button.isBordered = false
@@ -590,12 +615,11 @@ final class DashboardView: NSView {
             button.addItem(withTitle: HistoryText.range(range))
             button.lastItem?.representedObject = range.rawValue
         }
-        button.selectItem(at: UsageHistoryRange.allCases.firstIndex(of: selected) ?? 0)
         button.target = self
         button.action = #selector(historyRangeChosen(_:))
         button.setAccessibilityLabel(String(localized: "Usage range"))
         return button
-    }
+    }()
 
     private func historyTotal(tokens: String, cost: String, note: String, description: String) -> NSView {
         let amount = Self.label(tokens, size: 20, weight: .semibold)
