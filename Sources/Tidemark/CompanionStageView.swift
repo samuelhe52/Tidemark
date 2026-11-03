@@ -23,7 +23,6 @@ final class CompanionStageView: NSView {
     var stripClicked: ((NSEvent) -> Bool)?
     var hiddenStripActive: (() -> Bool)?
     private var trackingArea: NSTrackingArea?
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -58,6 +57,7 @@ final class CompanionStageView: NSView {
     func show(
         _ phase: CompanionPhase, layout: CompanionLayout, animated: Bool, completion: (() -> Void)? = nil
     ) {
+        dashboard.cancelContentTransition()
         let reduced =
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             || ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -149,7 +149,7 @@ final class CompanionStageView: NSView {
         }
     }
 
-    /// The point of `rect` closest to the orb's center, in `rect`'s own coordinates.
+    /// Finds the point nearest the orb in the rectangle's local coordinates.
     private func pivot(toward orb: CGRect, in rect: CGRect) -> CGPoint {
         CGPoint(
             x: min(max(orb.midX, rect.minX), rect.maxX) - rect.minX,
@@ -184,7 +184,7 @@ final class CompanionStageView: NSView {
 /// The one-line summary shown beside the revealed orb.
 final class SummaryView: NSView {
     private let surface = GlassSurfaceView(cornerRadius: 14, kind: .content)
-    private let text = NSTextField(labelWithString: "")
+    private let text = CompanionLabel(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

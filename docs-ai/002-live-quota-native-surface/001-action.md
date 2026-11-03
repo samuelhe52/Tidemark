@@ -20,6 +20,9 @@
 - Surfaces are `NSGlassEffectView` (`.regular`). Text surfaces (`.content`) are tinted
   toward `windowBackgroundColor` at `GlassSurfaceView.contentTintStrength` (0.6); the
   orb is untinted. Before macOS 26 the popover material is used.
+- Updated 2026-11-03: companion text uses `CompanionLabel`, which opts out of
+  vibrancy and maps label colors to `controlTextColor` tiers; vibrant labels rendered
+  with harsh edges on glass.
 - `UsageService` returns one `ServiceUsage` per service with `AccountUsage` rows.
   Codex lists the active account first, then every CC Switch managed account.
   Claude codename windows are dropped. Live answers and attributed passive readings

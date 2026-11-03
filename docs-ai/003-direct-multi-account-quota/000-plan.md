@@ -109,4 +109,5 @@ when Live Usage is disabled.
 
 ## Amendments
 
-None yet.
+- Updated 2026-11-03: User-controlled dashboard account visibility — see
+  [002-account-visibility.md](002-account-visibility.md).

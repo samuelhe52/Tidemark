@@ -159,6 +159,10 @@ extension MotionCurve {   // TidemarkAppearance/CompanionMotion.swift
 - Nothing renders while hidden. Idle breathing is a Core Animation loop that runs only
   while the orb is visible.
 - Under Reduce Motion or Low Power Mode: no idle motion, and short fades replace springs.
+- Dashboard content changes (hiding or restoring accounts, quotas finishing loading)
+  animate per row: stable rows move into place, entering and leaving rows fade, and
+  the glass resizes without a crossfade. Reduce Motion and Low Power Mode use short
+  fades.
 
 ## 3. Dashboard
 

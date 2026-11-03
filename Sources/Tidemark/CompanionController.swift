@@ -38,6 +38,7 @@ final class CompanionController: NSObject {
     private var panelShowsStrip = true
     /// Identifies the newest presentation, so a superseded retract never shrinks the panel.
     private var presentationGeneration = 0
+    private var layoutGeneration = 0
 
     private static let liveDefaultsKey = "liveUsageEnabled"
 
@@ -66,6 +67,7 @@ final class CompanionController: NSObject {
         stage.orbHandle.dragEnded = { [weak self] in self?.dragEnded() }
         stage.dashboard.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
         stage.dashboard.onLiveChanged = { [weak self] in self?.setLiveEnabled($0) }
+        stage.dashboard.onVisibilityChanged = { [weak self] in self?.renderUsage(animated: true) }
         panel.contentView = stage
         renderUsage()
         updatePlacement()
@@ -209,7 +211,7 @@ final class CompanionController: NSObject {
             self.refreshedAt = .now
             self.lastRefresh = .now
             self.refreshTask = nil
-            self.renderUsage()
+            self.renderUsage(animated: true)
             if self.refreshAgain {
                 self.refreshAgain = false
                 self.refresh(userInitiated: true)
@@ -222,6 +224,7 @@ final class CompanionController: NSObject {
 
     private func present(animated: Bool) {
         guard let layout else { return }
+        layoutGeneration += 1
         presentationGeneration += 1
         let generation = presentationGeneration
         if state.phase != .hidden, panelShowsStrip {
@@ -246,12 +249,18 @@ final class CompanionController: NSObject {
         updateHitTesting()
     }
 
-    private func renderUsage() {
+    private func renderUsage(animated: Bool = false) {
+        let canAnimate = !panelShowsStrip && (state.phase == .expanded || state.phase == .pinned)
+        let transition =
+            canAnimate && (animated || stage.dashboard.contentTransitionIsActive)
+            ? stage.dashboard.prepareContentTransition() : nil
+        layoutGeneration += 1
+        stage.dashboard.cancelContentTransition()
         let now = Date()
         stage.summary.update(text: QuotaText.summary(usage, now: now))
         stage.dashboard.update(
             usage, liveEnabled: liveEnabled, refreshing: refreshTask != nil, refreshedAt: refreshedAt, now: now)
-        applyLayout()
+        applyLayout(transition: transition)
     }
 
     // MARK: - Dragging
@@ -320,15 +329,27 @@ final class CompanionController: NSObject {
         if !sleeping, !locked { panel.orderFrontRegardless() }
     }
 
-    private func applyLayout() {
+    private func applyLayout(transition: DashboardView.ContentTransition? = nil) {
         guard let anchor else { return }
+        layoutGeneration += 1
+        let generation = layoutGeneration
+        stage.dashboard.cancelContentTransition()
         let newLayout = CompanionLayout(
             anchor: anchor, dragPoint: dragPoint, summarySize: stage.summary.preferredSize,
             dashboardSize: stage.dashboard.preferredSize(maxHeight: CompanionLayout.dashboardMaxHeight(for: anchor)))
         layout = newLayout
-        let container = panelShowsStrip ? newLayout.strip : newLayout.frame
+        let container =
+            panelShowsStrip
+            ? newLayout.strip
+            : transition == nil ? newLayout.frame : newLayout.frame.union(panel.frame)
         if panel.frame != container { panel.setFrame(container, display: true) }
         stage.place(newLayout, in: container)
+        if let transition, !panelShowsStrip {
+            stage.dashboard.animateContent(from: transition) { [weak self] in
+                guard let self, self.layoutGeneration == generation else { return }
+                self.applyLayout()
+            }
+        }
         updateHitTesting()
     }
 
