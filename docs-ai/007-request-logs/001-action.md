@@ -48,7 +48,10 @@
     position. A locked vertical clip offset of the same distance keeps the rows in place.
   - The dashboard repositions it synchronously in its bounds-change handler, with
     responsive scrolling turned off.
-  - Mostly vertical wheel events go to the dashboard scroll view.
+  - Mostly vertical wheel events go to the dashboard scroll view. (Corrected 2026-11-04:
+    a trackpad gesture is routed as a whole, from its first event with movement through
+    its momentum; only plain mouse-wheel events are routed one by one. See
+    [004](004-gesture-routing.md).)
 - **Shared opener:** `ReadOnlyDatabase.open` replaces the inline opener in
   `UsageHistoryReader.read`.
 

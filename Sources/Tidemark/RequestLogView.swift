@@ -399,6 +399,8 @@ final class RequestLogView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
 fileprivate final class RequestLogHorizontalScrollView: NSScrollView {
     weak var verticalParent: NSScrollView?
+    private var gestureIsVertical: Bool?
+    private var pendingScrollStart: NSEvent?
 
     /// Rows start below the header instead of scrolling under it, so no row text shows behind
     /// the titles and the system scroll-edge effect has nothing to cover.
@@ -411,7 +413,44 @@ fileprivate final class RequestLogHorizontalScrollView: NSScrollView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        if abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+        let vertical = abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+        if event.phase.isEmpty && event.momentumPhase.isEmpty {
+            routeScrollWheel(event, vertically: vertical)
+            return
+        }
+
+        if event.phase.contains(.mayBegin) || event.phase.contains(.began) {
+            gestureIsVertical = nil
+            pendingScrollStart = nil
+        }
+        if gestureIsVertical == nil {
+            // A trackpad can begin with no movement. Wait for an axis, then deliver that
+            // start to the same scroll view as the movement and eventual momentum events.
+            if event.scrollingDeltaX == 0 && event.scrollingDeltaY == 0 {
+                if event.phase.contains(.began) { pendingScrollStart = event }
+                if event.phase.contains(.ended) || event.phase.contains(.cancelled)
+                    || event.momentumPhase.contains(.ended)
+                {
+                    pendingScrollStart = nil
+                }
+                return
+            }
+            gestureIsVertical = vertical
+            if let start = pendingScrollStart {
+                pendingScrollStart = nil
+                routeScrollWheel(start, vertically: vertical)
+            }
+        }
+        routeScrollWheel(event, vertically: gestureIsVertical == true)
+        // Keep the recipient after finger lift: momentum begins in a separate event.
+        if event.phase.contains(.cancelled) || event.momentumPhase.contains(.ended) {
+            gestureIsVertical = nil
+            pendingScrollStart = nil
+        }
+    }
+
+    private func routeScrollWheel(_ event: NSEvent, vertically: Bool) {
+        if vertically {
             verticalParent?.scrollWheel(with: event)
         } else {
             super.scrollWheel(with: event)

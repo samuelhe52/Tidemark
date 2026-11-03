@@ -103,3 +103,4 @@ and `data_source`. Provider display names come from the `providers` table, keyed
 
 - Updated 2026-11-03: dual-review fixes for refresh reconciliation, scroll anchoring, column widths and Settings reorder — see [002-review-fixes.md](002-review-fixes.md)
 - Updated 2026-11-03: table UI, CC Switch model display names, TTFT, short Claude names, panel height and the sticky-header redesign and flashing fix — see [003-ui-and-model-names.md](003-ui-and-model-names.md)
+- Updated 2026-11-04: trackpad scroll gestures in the Request Logs table are routed as a whole, with a correction to the 001 routing line and the 003 flashing account — see [004-gesture-routing.md](004-gesture-routing.md)

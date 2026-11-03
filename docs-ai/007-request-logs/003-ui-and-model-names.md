@@ -68,7 +68,9 @@ did not fix the flashing, so a Codex thread (`gpt-6.1-sol`, high effort, thread
 4. **Rows below the header.** `RequestLogHorizontalScrollView.tile()` puts the content
    clip below the header, so rows no longer scroll under the titles. The system's
    scroll-edge effect then has nothing to cover.
-5. **The flashing**, fixed by the Codex thread:
+5. **The flashing**, fixed by the Codex thread (corrected 2026-11-04: this was one cause,
+   not the only one; the same thread later found split trackpad gesture routing, see
+   [004](004-gesture-routing.md)):
    - **Cause:** `DashboardView` did not reposition the header in its
      `boundsDidChangeNotification` handler. It queued the repositioning with
      `DispatchQueue.main.async`, so a frame could be drawn with the new outer offset and
@@ -139,10 +141,15 @@ Runtime evidence:
   | --- | --- | --- |
   | Programmatic | 239 of 240 | 0 of 240 |
   | Synthetic wheel and momentum | 28 of 160 | 0 of 160 |
+
+  This harness measured header position only, not delivery of whole scroll gestures; see
+  [004](004-gesture-routing.md).
   | Fractional and boundary positions | 5 of 9 | 0 of 9 |
 
 Not verified yet:
 
-- the flashing fix with a real trackpad, including elastic scrolling;
+- the flashing fix with a real trackpad, including elastic scrolling (update 2026-11-04:
+  the maintainer reported trackpad scrolling works after the gesture-routing change;
+  see [004](004-gesture-routing.md));
 - the native header-drag animation;
 - the short-name toggle in the running app.
