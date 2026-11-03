@@ -446,7 +446,12 @@ final class DashboardView: NSView {
         ) {
             let title = Self.label(name, size: 13, weight: .semibold)
             let plan = Self.label(planName, size: 11, color: .secondaryLabelColor)
-            return Self.row(title, singleVisible.map { accountControls($0, detail: plan) } ?? plan)
+            let row = Self.row(title, singleVisible.map { accountControls($0, detail: plan) } ?? plan)
+            if singleVisible != nil { row.alignment = .centerY }
+            return row
+        }
+        if let single, !single.windows.isEmpty, let header = rows[.service(sectionID)]?.view {
+            content.setCustomSpacing(6, after: header)
         }
         for account in service.accounts {
             if single == nil {
@@ -454,6 +459,9 @@ final class DashboardView: NSView {
                     .account(account.id), state: [account.email ?? "", account.plan ?? "", String(account.isActive)],
                     previous: previous
                 ) { accountHeader(account) }
+                if !account.windows.isEmpty, let header = rows[.account(account.id)]?.view {
+                    content.setCustomSpacing(6, after: header)
+                }
             }
             for start in stride(from: 0, to: account.windows.count, by: 2) {
                 let windows = account.windows[start..<min(start + 2, account.windows.count)]
@@ -662,7 +670,9 @@ final class DashboardView: NSView {
             .compactMap { $0 }.joined(separator: " · ")
         let trailing = Self.label(
             details, size: 10, color: account.isActive ? .controlAccentColor : .secondaryLabelColor)
-        return Self.row(name, accountControls(account, detail: trailing))
+        let row = Self.row(name, accountControls(account, detail: trailing))
+        row.alignment = .centerY
+        return row
     }
 
     private func accountControls(_ account: AccountUsage, detail: NSView) -> NSView {
