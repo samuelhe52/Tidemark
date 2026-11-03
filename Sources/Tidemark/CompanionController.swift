@@ -354,6 +354,7 @@ final class CompanionController: NSObject {
 
     private func dragChanged(to point: CGPoint) {
         if state.phase != .dragging { send(.dragBegan) }
+        stage.cancelOrbSettle()
         dragPoint = point
         if let nearest = DockGeometry.nearest(to: point, displays: displays()) {
             anchor = nearest
@@ -362,12 +363,16 @@ final class CompanionController: NSObject {
     }
 
     private func dragEnded() {
+        let snapOrigin = layout?.orb  // orb position while still dragging
         if let point = dragPoint, let nearest = DockGeometry.nearest(to: point, displays: displays()) {
             placement = nearest.placement
             anchor = nearest
         }
         dragPoint = nil
-        applyLayout()
+        applyLayout()                  // snaps panel and orb frame to docked position silently
+        if let origin = snapOrigin, let target = layout?.orb {
+            stage.settleOrb(from: origin, to: target) {}
+        }
         persistPlacement()
         send(.dragEnded)
         reconcilePointer()

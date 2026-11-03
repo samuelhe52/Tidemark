@@ -63,9 +63,7 @@ final class CompanionStageView: NSView {
         _ phase: CompanionPhase, layout: CompanionLayout, animated: Bool, completion: (() -> Void)? = nil
     ) {
         dashboard.cancelContentTransition()
-        let reduced =
-            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            || ProcessInfo.processInfo.isLowPowerModeEnabled
+        let reduced = Self.reducesMotion
         let orb = orbHandle.orb
         let wasDocked = orb.docked
         let docked = phase == .hidden
@@ -117,6 +115,37 @@ final class CompanionStageView: NSView {
             }
         }
         CATransaction.commit()
+    }
+
+    /// True while a released orb is still springing toward its resting frame.
+    var orbSettling: Bool { orbHandle.layer?.animation(forKey: Self.settleKey) != nil }
+
+    /// Springs the orb from `origin` to `target`, both global, after `place` has put it at `target`.
+    ///
+    /// The motion is an additive translation, so the orb's frame and pose stay where `place` left them.
+    /// `completion` also runs when the settle is cancelled; read `orbSettling` to tell them apart.
+    func settleOrb(from origin: CGRect, to target: CGRect, completion: @escaping () -> Void) {
+        let offset = CGSize(width: origin.minX - target.minX, height: origin.minY - target.minY)
+        guard let layer = orbHandle.layer, offset != .zero, !Self.reducesMotion else { return completion() }
+        let curve = MotionCurve.settle
+        let spring = CASpringAnimation(perceptualDuration: curve.response, bounce: curve.bounce)
+        spring.keyPath = "transform.translation"
+        spring.isAdditive = true
+        spring.fromValue = NSValue(size: offset)
+        spring.toValue = NSValue(size: .zero)
+        spring.duration = spring.settlingDuration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        layer.add(spring, forKey: Self.settleKey)
+        CATransaction.commit()
+    }
+
+    func cancelOrbSettle() { orbHandle.layer?.removeAnimation(forKey: Self.settleKey) }
+
+    private static let settleKey = "orb.settle"
+
+    private static var reducesMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled
     }
 
     // MARK: - Poses

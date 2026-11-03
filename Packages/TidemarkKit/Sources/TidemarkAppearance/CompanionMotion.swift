@@ -23,6 +23,8 @@ public struct MotionCurve: Equatable, Sendable {
     public static let expand = MotionCurve(response: 0.36, bounce: 0.1)
     /// Everything returns to the edge quickly and without bounce.
     public static let retract = MotionCurve(response: 0.26, bounce: 0)
+    /// A released orb springs to its resting spot beside the edge.
+    public static let settle = MotionCurve(response: 0.38, bounce: 0.18)
 }
 
 /// The two animatable properties of a companion layer. Both are composited by the render server.
