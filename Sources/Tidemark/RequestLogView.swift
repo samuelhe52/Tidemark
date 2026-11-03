@@ -167,7 +167,7 @@ final class RequestLogView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let viewport = convert(outer.contentView.bounds, from: outer.contentView)
         let visible = window != nil && !isHiddenOrHasHiddenAncestor && viewport.intersects(bounds)
         if visible && !started { load() }
-        if visible && started && !busy && !failed && !complete && viewport.maxY >= bounds.maxY - 24 * 10 { load() }
+        if visible && started && !busy && !failed && !complete && viewport.maxY >= bounds.maxY - 24 * 50 { load() }
         viewportTop = viewport.minY
         layoutBody()
     }
@@ -194,7 +194,7 @@ final class RequestLogView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                     if reconciling, let bottom {
                         return RequestLogPage(entries: try reader.loadedSpan(through: bottom), isComplete: false)
                     }
-                    return try reader.page(after: bottom)
+                    return try reader.page(after: bottom, limit: 150)
                 }
             }.value
             guard let self else { return }

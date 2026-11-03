@@ -18,8 +18,8 @@
   and its separator from the content height, so the panel stops at the end of Usage.
 - **Lazy loading:** `RequestLogView` owns a `RequestLogReader` and reads off the main
   actor. The controller does not do this read, which differs from Usage history. A read
-  starts when the outer viewport reaches the section. After that, rows load in 50-row
-  pages, and the next page starts near the end of the loaded rows. A dashboard update
+  starts when the outer viewport reaches the section. Rows now load in 150-row
+  pages, with the next page requested roughly 50 rows before the end. A dashboard update
   with a new `refreshedAt` re-reads the whole loaded span with
   `RequestLogReader.loadedSpan(through:)` and replaces the rows.
   `RowScrollPreservation` keeps the visible rows in place (corrected 2026-11-03; see
