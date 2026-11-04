@@ -10,7 +10,7 @@ import TidemarkData
 
 /// A compact quota gauge in the selected percentage style.
 ///
-/// Unknown readings have no progress stroke.
+/// Unknown readings show only a centered dash, with no progress stroke.
 final class QuotaRingView: NSView {
     private let progressValue: Double?
 
@@ -22,12 +22,13 @@ final class QuotaRingView: NSView {
         let value = CompanionLabel(
             percentage.map(QuotaText.percent) ?? "—", size: 11, weight: .medium,
             color: remaining == nil ? .secondaryLabelColor : .labelColor, monospacedDigits: true)
-        let unit = CompanionLabel(
-            remaining == nil
-                ? String(localized: "unknown")
-                : style == .remaining ? String(localized: "left") : String(localized: "used"),
-            size: 8, color: .secondaryLabelColor)
-        let labels = NSStackView(views: [value, unit])
+        let labels = NSStackView(views: [value])
+        if percentage != nil {
+            let unit = CompanionLabel(
+                style == .remaining ? String(localized: "left") : String(localized: "used"),
+                size: 8, color: .secondaryLabelColor)
+            labels.addArrangedSubview(unit)
+        }
         labels.orientation = .vertical
         labels.alignment = .centerX
         labels.spacing = 0
