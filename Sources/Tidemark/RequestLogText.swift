@@ -46,10 +46,23 @@ enum RequestLogText {
     }
 
     static func time(_ entry: RequestLogEntry, full: Bool = false) -> String {
-        let f = DateFormatter()
-        f.dateFormat =
+        let format =
             full ? "yyyy-MM-dd HH:mm:ss" : Calendar.current.isDateInToday(entry.date) ? "HH:mm:ss" : "MM-dd HH:mm"
-        return f.string(from: entry.date)
+        return timeFormatter(format).string(from: entry.date)
+    }
+
+    /// Fitting columns formats every loaded row, and creating a formatter costs far more than using one.
+    private static var timeFormatters: [String: DateFormatter] = [:]
+
+    private static func timeFormatter(_ format: String) -> DateFormatter {
+        if let formatter = timeFormatters[format] { return formatter }
+        let formatter = DateFormatter()
+        // Long-lived, so these must follow the system's locale and time zone.
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = format
+        timeFormatters[format] = formatter
+        return formatter
     }
 
     static func value(_ column: RequestLogColumn, _ e: RequestLogEntry, shortClaude: Bool) -> String {

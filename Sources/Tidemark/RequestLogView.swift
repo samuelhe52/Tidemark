@@ -269,7 +269,7 @@ final class RequestLogView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             var widest = Self.width(column.title, font: Self.headerFont)
             for entry in entries {
                 let text = kind.map { value($0, entry) } ?? RequestLogText.time(entry)
-                widest = max(widest, Self.width(text, font: Self.valueFont))
+                widest = max(widest, valueWidth(text))
             }
             // A column's width excludes the intercell spacing the table adds around its cells.
             return ceil(widest) + 1
@@ -295,6 +295,17 @@ final class RequestLogView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private static func width(_ text: String, font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// Measured widths of cell text. Every refresh refits all loaded rows, and most of their text repeats.
+    private var valueWidths: [String: CGFloat] = [:]
+
+    private func valueWidth(_ text: String) -> CGFloat {
+        if let width = valueWidths[text] { return width }
+        if valueWidths.count >= 20_000 { valueWidths.removeAll(keepingCapacity: true) }
+        let width = Self.width(text, font: Self.valueFont)
+        valueWidths[text] = width
+        return width
     }
 
     private func resizeBody() {

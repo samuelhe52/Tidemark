@@ -138,7 +138,6 @@ final class CompanionController: NSObject {
         guard !isSuspended else { return }
         let previous = state.phase
         state.send(event, now: ProcessInfo.processInfo.systemUptime)
-        if previous == .hidden, state.phase != .hidden { model.refreshIfStale() }
         deadlineTimer?.invalidate()
         if let deadline = state.nextDeadline {
             deadlineTimer = Timer.scheduledTimer(
@@ -168,7 +167,7 @@ final class CompanionController: NSObject {
                 }
             }
         }
-        if previous != state.phase { present(animated: true) }
+        if previous != state.phase { present(animated: true, emerging: previous == .hidden) }
         updateHitTesting()
     }
 
@@ -208,7 +207,7 @@ final class CompanionController: NSObject {
 
     // MARK: - Presentation
 
-    private func present(animated: Bool) {
+    private func present(animated: Bool, emerging: Bool = false) {
         guard let layout else { return }
         layoutGeneration += 1
         presentationGeneration += 1
@@ -221,7 +220,11 @@ final class CompanionController: NSObject {
         }
         stage.orbHandle.pinned = state.phase == .pinned
         stage.show(state.phase, layout: layout, animated: animated) { [weak self] in
-            guard let self, generation == self.presentationGeneration, self.state.phase == .hidden else { return }
+            guard let self else { return }
+            // The morph's spring runs on the main thread, and applying a refresh would stall it. Wait
+            // for it to settle; a newer phase that replaced this one must not lose the refresh.
+            if emerging, self.state.phase != .hidden { self.model.refreshIfStale() }
+            guard generation == self.presentationGeneration, self.state.phase == .hidden else { return }
             self.collapseToStrip()
         }
     }
