@@ -299,7 +299,8 @@ public actor UsageService {
             key = AccountKey.codex(resolved)
         }
         if let expiry = token.expiry, expiry <= now.addingTimeInterval(60) {
-            return fail(.credentialExpired, key: key, now: now)
+            gate.recordExpiredCredential(key, now: now)
+            return (.failed(.credentialExpired), key)
         }
         let data: Data
         let response: HTTPURLResponse

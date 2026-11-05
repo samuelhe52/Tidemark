@@ -8,6 +8,7 @@
 | 2026-11-03 | AppKit + Core Animation surface, live quota, managed Codex accounts, last-good store | Uncommitted working tree |
 | 2026-11-03 | Dashboard and summary glass tinted for legibility after maintainer feedback | Uncommitted working tree |
 | 2026-11-03 | Review fixes: account attribution, gate key, future-dated readings, dashboard height | Uncommitted working tree |
+| 2026-11-05 | Locally expired credentials retry on the normal schedule after Claude Code or Codex renews them; network failures retain backoff | Working tree |
 
 ## Outcome and current state (as of 2026-11-03)
 

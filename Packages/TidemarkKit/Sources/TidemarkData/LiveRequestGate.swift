@@ -38,6 +38,12 @@ struct LiveRequestGate {
         entries[key] = Entry(lastAttempt: now, notBefore: now, failures: 0)
     }
 
+    /// A locally expired credential sent no request; retry on the normal schedule so a
+    /// credential renewed by its owner can be picked up without network-error backoff.
+    mutating func recordExpiredCredential(_ key: String, now: Date) {
+        entries[key] = Entry(lastAttempt: now, notBefore: now, failures: 0)
+    }
+
     /// `jitter` is a factor in 0.8…1.2; `retryAfter` from the server wins over the backoff.
     mutating func recordFailure(_ key: String, now: Date, retryAfter: TimeInterval?, jitter: Double) {
         let failures = (entries[key]?.failures ?? 0) + 1

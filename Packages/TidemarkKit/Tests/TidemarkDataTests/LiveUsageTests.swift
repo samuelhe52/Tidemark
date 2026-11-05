@@ -39,6 +39,25 @@ struct LiveUsageTests {
         #expect(!fixture.transport.requests.contains { $0.url?.host == "api.anthropic.com" })
     }
 
+    @Test func renewedClaudeCredentialCanBeRetriedAfterExpiry() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        let expired = (now.timeIntervalSince1970 - 10) * 1000
+        fixture.credentials.items["Claude Code-credentials"] = Data(
+            #"{"claudeAiOauth":{"accessToken":"old","expiresAt":\#(expired)}}"#.utf8)
+        fixture.transport.respond = { _ in (200, Data(#"{"five_hour":{"utilization":21}}"#.utf8)) }
+        let service = fixture.service(live: true, clock: clock)
+        #expect(await service.refresh(userInitiated: true).first?.accounts.first?.issue == .credentialExpired)
+        clock.now = now + 60
+        #expect(await service.refresh(userInitiated: false).first?.accounts.first?.issue == .credentialExpired)
+        fixture.credentials.items["Claude Code-credentials"] = Data(
+            #"{"claudeAiOauth":{"accessToken":"new","expiresAt":\#((now.timeIntervalSince1970 + 3600) * 1000)}}"#.utf8)
+        clock.now = now + 80
+        let account = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
+        #expect(account.issue == nil)
+        #expect(account.windows.first?.usedPercent == 21)
+    }
+
     @Test func activeCodexAccountIsLiveAndOthersComeFromTheStore() async throws {
         let fixture = try Fixture()
         try fixture.write(Fixture.codexAuth(token: Fixture.jwt(expiry: now + 3600)), to: ".codex/auth.json")
