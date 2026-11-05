@@ -12,7 +12,7 @@ import TidemarkData
 ///
 /// The dashboard rebuilds this view whenever today's totals change, so the shown span is owned by
 /// the caller and passed back in through `onPageChange`.
-final class UsageHeatmapView: NSStackView {
+final class UsageHeatmapView: NSStackView, HoverReconciling {
     /// A span is 53 weeks; page 0 ends with the current week.
     private static let spanDays = 371
 
@@ -106,6 +106,8 @@ final class UsageHeatmapView: NSStackView {
         return (span - 1) / Self.spanDays
     }
 
+    func reconcileHover(at screenPoint: CGPoint) { plot.reconcileHover(at: screenPoint) }
+
     private func updateSpan() {
         guard let first = days.first?.interval.start, let last = days.last?.interval.start,
             let weekEnd = currentWeekEnd,
@@ -174,23 +176,10 @@ fileprivate final class HeatmapPlotView: NSView {
             width: max(0, pitch - 1), height: max(0, pitch - 1))
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(
-            NSTrackingArea(
-                rect: .zero,
-                options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-
-    override func mouseMoved(with event: NSEvent) { track(event) }
-    override func mouseEntered(with event: NSEvent) { track(event) }
-    override func mouseExited(with event: NSEvent) { selected = nil }
-
-    private func track(_ event: NSEvent) {
-        guard pitch > 0 else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard point.x >= 20, point.y >= 15, point.y < 15 + pitch * 7, point.x < bounds.width else {
+    func reconcileHover(at screenPoint: CGPoint) {
+        guard pitch > 0, let point = visiblePoint(screenPoint), point.x >= 20, point.y >= 15,
+            point.y < 15 + pitch * 7
+        else {
             selected = nil
             return
         }

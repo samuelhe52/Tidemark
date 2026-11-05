@@ -286,6 +286,7 @@ final class CompanionController: NSObject {
     private func reconcilePointer(at eventPoint: CGPoint? = nil) {
         guard let layout, !isSuspended else { return }
         let point = eventPoint ?? NSEvent.mouseLocation
+        stage.dashboard.reconcileHover(at: point)
         send(
             .pointer(
                 inside: layout.contains(point, phase: state.phase),

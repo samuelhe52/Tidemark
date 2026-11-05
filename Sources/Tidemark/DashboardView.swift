@@ -302,6 +302,10 @@ final class DashboardView: NSView {
 
     // MARK: - Content
 
+    func reconcileHover(at screenPoint: CGPoint) {
+        (rows[.historyChart]?.view as? HoverReconciling)?.reconcileHover(at: screenPoint)
+    }
+
     func append(
         _ id: RowID, state: AnyHashable, motionState: AnyHashable? = nil,
         spacingAfter: CGFloat? = nil,

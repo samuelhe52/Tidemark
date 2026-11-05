@@ -7,9 +7,27 @@
 
 import AppKit
 
+/// A chart whose hover follows the pointer position the controller reconciles.
+///
+/// Tracking areas cannot drive this: the dashboard's rebuild re-adds reused rows, and AppKit then
+/// sends a view under the pointer neither `mouseMoved` nor `mouseExited`, leaving its hover stuck.
+protocol HoverReconciling {
+    func reconcileHover(at screenPoint: CGPoint)
+}
+
+extension NSView {
+    /// A screen point in local coordinates, when it falls on the part of this view that is showing.
+    func visiblePoint(_ screenPoint: CGPoint) -> NSPoint? {
+        guard let window, !isHiddenOrHasHiddenAncestor else { return nil }
+        let point = convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+        // An unclipped view's visible rect can extend past its bounds.
+        return bounds.intersection(visibleRect).contains(point) ? point : nil
+    }
+}
+
 /// Token usage over time as bars. Hovering a bar shows its figures in the readout line; otherwise
 /// the readout names the busiest bar.
-final class UsageChartView: NSStackView {
+final class UsageChartView: NSStackView, HoverReconciling {
     struct Bar: Hashable {
         let value: Int
         let label: String
@@ -19,6 +37,7 @@ final class UsageChartView: NSStackView {
     private let bars: [Bar]
     private let readout = CompanionLabel("", size: 10, color: .secondaryLabelColor, monospacedDigits: true)
     private let idleText: String
+    private let plot: BarPlotView
 
     init(bars: [Bar], leading: String, trailing: String, range: String) {
         self.bars = bars
@@ -28,6 +47,7 @@ final class UsageChartView: NSStackView {
                 bars[$0].value > 0 ? String(localized: "Busiest \(bars[$0].label) · \(bars[$0].detail)") : nil
             }
             ?? ""
+        plot = BarPlotView(values: bars.map(\.value))
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -37,7 +57,6 @@ final class UsageChartView: NSStackView {
         readout.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         readout.stringValue = idleText
 
-        let plot = BarPlotView(values: bars.map(\.value))
         plot.hovered = { [weak self] index in self?.show(index) }
         plot.setAccessibilityElement(true)
         plot.setAccessibilityRole(.image)
@@ -54,6 +73,8 @@ final class UsageChartView: NSStackView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func reconcileHover(at screenPoint: CGPoint) { plot.reconcileHover(at: screenPoint) }
 
     private func show(_ index: Int?) {
         guard let index, bars.indices.contains(index) else {
@@ -93,24 +114,12 @@ fileprivate final class BarPlotView: NSView {
 
     override var isFlipped: Bool { false }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        // The panel never becomes key, so tracking must not depend on window focus.
-        addTrackingArea(
-            NSTrackingArea(
-                rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                owner: self))
-    }
-
-    override func mouseMoved(with event: NSEvent) { track(event) }
-    override func mouseEntered(with event: NSEvent) { track(event) }
-    override func mouseExited(with event: NSEvent) { hoveredIndex = nil }
-
-    private func track(_ event: NSEvent) {
-        guard !values.isEmpty, bounds.width > 0 else { return }
-        let x = convert(event.locationInWindow, from: nil).x
-        hoveredIndex = min(values.count - 1, max(0, Int(x / (bounds.width / CGFloat(values.count)))))
+    func reconcileHover(at screenPoint: CGPoint) {
+        guard !values.isEmpty, bounds.width > 0, let point = visiblePoint(screenPoint) else {
+            hoveredIndex = nil
+            return
+        }
+        hoveredIndex = min(values.count - 1, max(0, Int(point.x / (bounds.width / CGFloat(values.count)))))
     }
 
     override func draw(_ dirtyRect: NSRect) {
