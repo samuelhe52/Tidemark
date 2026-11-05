@@ -43,12 +43,15 @@ dmg: ## Build a signed, notarized DMG with the Xcode account (VERSION=x.y.z opti
 	@scripts/build-dmg.sh
 
 .PHONY: release
-release: ## Build the DMG and publish it as GitHub release vVERSION (VERSION=x.y.z required)
-	@[ -n "$(VERSION)" ] || { echo "Usage: make release VERSION=x.y.z"; exit 1; }
+release: RELEASE_COMMIT := $(shell git rev-parse HEAD)
+release: ## Build the DMG and publish it as GitHub release vVERSION (VERSION=x.y.z required, NOTES=file optional)
+	@[ -n "$(VERSION)" ] || { echo "Usage: make release VERSION=x.y.z [NOTES=file]"; exit 1; }
 	@[ -n "$$NOTARY_PROFILE" ] || { echo "Set NOTARY_PROFILE to a notarytool keychain profile so the DMG is notarized."; exit 1; }
+	@[ -z "$(NOTES)" ] || [ -f "$(NOTES)" ] || { echo "No notes file at $(NOTES)."; exit 1; }
+	@git merge-base --is-ancestor $(RELEASE_COMMIT) origin/main || { echo "Push $(RELEASE_COMMIT) to origin/main first; the release tag must match the build."; exit 1; }
 	@VERSION=$(VERSION) scripts/build-dmg.sh
 	gh release create "v$(VERSION)" build/release/Tidemark-$(VERSION).dmg build/release/Tidemark-$(VERSION).dmg.sha256 \
-		--title "Tidemark $(VERSION)" --generate-notes
+		--title "Tidemark $(VERSION)" --target $(RELEASE_COMMIT) $(if $(NOTES),--notes-file "$(NOTES)",--generate-notes)
 
 # Maintenance
 .PHONY: clean
