@@ -5,7 +5,7 @@
 | Date | Change | Ref |
 | --- | --- | --- |
 | 2026-11-07 | Verified CC Switch's `claude -p /usage` approach against upstream source and the installed Claude Code 2.1.319 | Plan background |
-| 2026-11-07 | Replaced the Claude Keychain read and `api/oauth/usage` request with the Claude Code run | Uncommitted on `main` after `8a2576d` |
+| 2026-11-07 | Replaced the Claude Keychain read and `api/oauth/usage` request with the Claude Code run | `e3d0e2c` |
 
 ## Outcome and current state (as of 2026-11-07)
 
