@@ -155,7 +155,8 @@ struct UsageHistoryTests {
             home: fixture.home, codexHome: fixture.home.appending(path: ".codex"),
             ccSwitchHome: fixture.home.appending(path: ".cc-switch"),
             supportDirectory: fixture.home.appending(path: "Tidemark"), credentials: fixture.credentials,
-            transport: fixture.transport, now: { Self.now })
+            transport: fixture.transport,
+            claudeUsage: fixture.claudeUsage, now: { Self.now })
         return UsageHistoryReader(environment: environment).read(range, now: Self.now, calendar: calendar)
     }
 

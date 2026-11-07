@@ -15,6 +15,8 @@ struct LocalSources {
     struct ClaudeIdentity: Equatable {
         var accountUUID: String?
         var email: String?
+        /// `oauthAccount.organizationType` without its `claude_` prefix, such as `pro` or `max`.
+        var plan: String?
     }
 
     struct ClaudeFile {
@@ -32,8 +34,10 @@ struct LocalSources {
         }
         var file = ClaudeFile()
         if let account = QuotaParser.object(data)?["oauthAccount"] as? [String: Any] {
+            let organization = account["organizationType"] as? String
             file.identity = ClaudeIdentity(
-                accountUUID: account["accountUuid"] as? String, email: account["emailAddress"] as? String)
+                accountUUID: account["accountUuid"] as? String, email: account["emailAddress"] as? String,
+                plan: organization.flatMap { $0.hasPrefix("claude_") ? String($0.dropFirst(7)) : nil }.nonEmpty)
         }
         file.cache = QuotaParser.claudeCache(data)
         if file.cache == nil { file.issue = .unrecognized }

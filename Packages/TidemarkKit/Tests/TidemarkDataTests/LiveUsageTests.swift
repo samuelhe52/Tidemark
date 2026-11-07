@@ -22,6 +22,7 @@ struct LiveUsageTests {
         let services = await fixture.service(live: false, now: now).refresh(userInitiated: true)
         #expect(fixture.credentials.reads.isEmpty)
         #expect(fixture.transport.requests.isEmpty)
+        #expect(fixture.claudeUsage.runs == 0)
         // `auth.json` names acct-a, so CC Switch's older marker for acct-b does not decide.
         let codex = try #require(services.last?.accounts)
         #expect(codex.map(\.id) == ["codex:managed:local-0", "codex:managed:local-1"])
@@ -29,33 +30,60 @@ struct LiveUsageTests {
         #expect(codex.last?.issue == .notObserved)
     }
 
-    @Test func expiredClaudeTokenIsReportedAndNeverSent() async throws {
-        let fixture = try Fixture()
-        let expired = (now.timeIntervalSince1970 - 10) * 1000
-        fixture.credentials.items["Claude Code-credentials"] = Data(
-            #"{"claudeAiOauth":{"accessToken":"t","expiresAt":\#(expired)}}"#.utf8)
-        let services = await fixture.service(live: true, now: now).refresh(userInitiated: true)
-        #expect(services.first?.accounts.first?.issue == .credentialExpired)
-        #expect(!fixture.transport.requests.contains { $0.url?.host == "api.anthropic.com" })
-    }
-
-    @Test func renewedClaudeCredentialCanBeRetriedAfterExpiry() async throws {
+    @Test func claudeLiveRunsClaudeCodeAndNeverReadsItsCredentials() async throws {
         let fixture = try Fixture()
         let clock = Clock(now)
-        let expired = (now.timeIntervalSince1970 - 10) * 1000
-        fixture.credentials.items["Claude Code-credentials"] = Data(
-            #"{"claudeAiOauth":{"accessToken":"old","expiresAt":\#(expired)}}"#.utf8)
-        fixture.transport.respond = { _ in (200, Data(#"{"five_hour":{"utilization":21}}"#.utf8)) }
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 86400, used: 10), to: ".claude.json")
+        fixture.claudeUsage.respond = { [fixture] in
+            _ = try? fixture.write(
+                Fixture.claudeState(account: "A", fetchedAt: clock.now + 1, used: 21, plan: "claude_max"),
+                to: ".claude.json")
+            return .finished
+        }
         let service = fixture.service(live: true, clock: clock)
-        #expect(await service.refresh(userInitiated: true).first?.accounts.first?.issue == .credentialExpired)
-        clock.now = now + 60
-        #expect(await service.refresh(userInitiated: false).first?.accounts.first?.issue == .credentialExpired)
-        fixture.credentials.items["Claude Code-credentials"] = Data(
-            #"{"claudeAiOauth":{"accessToken":"new","expiresAt":\#((now.timeIntervalSince1970 + 3600) * 1000)}}"#.utf8)
-        clock.now = now + 80
-        let account = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
-        #expect(account.issue == nil)
+        let account = try #require(await service.refresh(userInitiated: false).first?.accounts.first)
+        #expect(account.issue == nil && account.plan == "max")
         #expect(account.windows.first?.usedPercent == 21)
+        #expect(!fixture.credentials.reads.contains { $0.hasPrefix("Claude") })
+        #expect(!fixture.transport.requests.contains { $0.url?.host == "api.anthropic.com" })
+        // The gate still limits runs.
+        clock.now = now + 60
+        _ = await service.refresh(userInitiated: false)
+        #expect(fixture.claudeUsage.runs == 1)
+    }
+
+    @Test func claudeCacheThatDidNotRefreshOrNamesAnotherAccountIsAFailure() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 86400, used: 10), to: ".claude.json")
+        fixture.claudeUsage.respond = { .finished }
+        let service = fixture.service(live: true, clock: clock)
+        let stale = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
+        #expect(stale.issue == .requestFailed && stale.windows.first?.usedPercent == 10)
+
+        // Backed off: an immediate user refresh does not run Claude Code again.
+        clock.now = now + 30
+        _ = await service.refresh(userInitiated: true)
+        #expect(fixture.claudeUsage.runs == 1)
+
+        clock.now = now + 120
+        fixture.claudeUsage.respond = { [fixture] in
+            // Still signed in as A, but the cache belongs to B.
+            let ms = clock.now.timeIntervalSince1970 * 1000
+            _ = try? fixture.write(
+                #"{"oauthAccount":{"accountUuid":"A"},"cachedUsageUtilization":{"fetchedAtMs":\#(ms),"accountUuid":"B","utilization":{"five_hour":{"utilization":90}}}}"#,
+                to: ".claude.json")
+            return .finished
+        }
+        let other = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
+        #expect(other.issue == .requestFailed && other.windows.first?.usedPercent != 90)
+    }
+
+    @Test func missingClaudeCodeIsReported() async throws {
+        let fixture = try Fixture()
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 86400, used: 10), to: ".claude.json")
+        let account = await fixture.service(live: true, now: now).refresh(userInitiated: true).first?.accounts.first
+        #expect(account?.issue == .cliUnavailable)
     }
 
     @Test func activeCodexAccountIsLiveAndOthersComeFromTheStore() async throws {
@@ -91,39 +119,36 @@ struct LiveUsageTests {
         #expect(!saved.contains(Fixture.jwt(expiry: now + 3600)))
     }
 
-    @Test func claudeSwitchRereadsTheTokenAndDropsTheOldStatuslineReading() async throws {
+    @Test func claudeSwitchDropsTheOldStatuslineReading() async throws {
         let fixture = try Fixture()
         let clock = Clock(now)
-        fixture.transport.respond = { request in
-            let token = request.value(forHTTPHeaderField: "Authorization")
-            return token == "Bearer tok-a" ? (200, Data(#"{"five_hour":{"utilization":10}}"#.utf8)) : (500, Data())
-        }
         try fixture.write(#"{"oauthAccount":{"accountUuid":"A"}}"#, to: ".claude.json")
-        fixture.credentials.items["Claude Code-credentials"] = Data(#"{"claudeAiOauth":{"accessToken":"tok-a"}}"#.utf8)
+        fixture.claudeUsage.respond = { .finished }
         let service = fixture.service(live: true, clock: clock)
         _ = await service.refresh(userInitiated: true)
 
         // Switch to B. The tap still holds A's reading, taken before Tidemark saw the switch.
         clock.now = now + 60
         try fixture.write(#"{"oauthAccount":{"accountUuid":"B"}}"#, to: ".claude.json")
-        fixture.credentials.items["Claude Code-credentials"] = Data(#"{"claudeAiOauth":{"accessToken":"tok-b"}}"#.utf8)
         try fixture.write(
             #"{"rate_limits":{"five_hour":{"used_percentage":90}},"received_at":\#(now.timeIntervalSince1970 + 30)}"#,
             to: "Library/Application Support/Tidemark/claude-rate-limits.json")
         let claude = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
-        #expect(fixture.transport.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer tok-b")
         #expect(claude.id == "claude:B" && claude.windows.isEmpty && claude.issue == .requestFailed)
     }
 
     @Test func futureDatedReadingNeverOutranksALiveOne() async throws {
         let fixture = try Fixture()
-        let future = (now.timeIntervalSince1970 + 86400) * 1000
+        let clock = Clock(now)
         try fixture.write(
-            #"{"oauthAccount":{"accountUuid":"A"},"cachedUsageUtilization":{"fetchedAtMs":\#(future),"accountUuid":"A","utilization":{"five_hour":{"utilization":50}}}}"#,
-            to: ".claude.json")
-        fixture.credentials.items["Claude Code-credentials"] = Data(#"{"claudeAiOauth":{"accessToken":"t"}}"#.utf8)
-        fixture.transport.respond = { _ in (200, Data(#"{"five_hour":{"utilization":10}}"#.utf8)) }
-        let services = await fixture.service(live: true, now: now).refresh(userInitiated: true)
+            #"{"rate_limits":{"five_hour":{"used_percentage":50}},"received_at":\#(now.timeIntervalSince1970 + 86400)}"#,
+            to: "Library/Application Support/Tidemark/claude-rate-limits.json")
+        try fixture.write(#"{"oauthAccount":{"accountUuid":"A"}}"#, to: ".claude.json")
+        fixture.claudeUsage.respond = { [fixture] in
+            _ = try? fixture.write(Fixture.claudeState(account: "A", fetchedAt: clock.now, used: 10), to: ".claude.json")
+            return .finished
+        }
+        let services = await fixture.service(live: true, clock: clock).refresh(userInitiated: true)
         #expect(services.first?.accounts.first?.windows.first?.usedPercent == 10)
     }
 
@@ -165,6 +190,7 @@ final class Fixture: @unchecked Sendable {
     let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     let credentials = FakeCredentials()
     let transport = FakeTransport()
+    let claudeUsage = FakeClaudeUsage()
 
     init() throws {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -188,8 +214,13 @@ final class Fixture: @unchecked Sendable {
         let environment = UsageEnvironment(
             home: home, codexHome: home.appending(path: ".codex"), ccSwitchHome: home.appending(path: ".cc-switch"),
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
-            credentials: credentials, transport: transport, now: { clock?.now ?? Date() })
+            credentials: credentials, transport: transport, claudeUsage: claudeUsage, now: { clock?.now ?? Date() })
         return UsageService(environment: environment, liveEnabled: live, jitter: { 1 })
+    }
+
+    /// `~/.claude.json` signed in as `account`, with a usage cache Claude Code fetched at `fetchedAt`.
+    static func claudeState(account: String, fetchedAt: Date, used: Double, plan: String = "claude_pro") -> String {
+        #"{"oauthAccount":{"accountUuid":"\#(account)","organizationType":"\#(plan)"},"cachedUsageUtilization":{"fetchedAtMs":\#(fetchedAt.timeIntervalSince1970 * 1000),"accountUuid":"\#(account)","utilization":{"five_hour":{"utilization":\#(used)}}}}"#
     }
 
     static func jwt(expiry: Date) -> String {
@@ -266,5 +297,25 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (body, response)
+    }
+}
+
+final class FakeClaudeUsage: ClaudeUsageCommand, @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: @Sendable () -> ClaudeUsageRun = { .unavailable }
+    private var count = 0
+
+    var runs: Int { lock.withLock { count } }
+    var respond: @Sendable () -> ClaudeUsageRun {
+        get { lock.withLock { handler } }
+        set { lock.withLock { handler = newValue } }
+    }
+
+    func run() async -> ClaudeUsageRun {
+        let handler = lock.withLock {
+            count += 1
+            return self.handler
+        }
+        return handler()
     }
 }

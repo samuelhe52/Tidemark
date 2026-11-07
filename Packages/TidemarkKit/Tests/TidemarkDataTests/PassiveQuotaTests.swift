@@ -57,13 +57,12 @@ struct PassiveQuotaTests {
             QuotaParser.claudeStatusline(Data(#"{"rate_limits":{"five_hour":{"used_percentage":0}}}"#.utf8)).isEmpty)
     }
 
-    @Test func liveAnswersParseMicrosecondDatesAndWindowLengths() throws {
+    @Test func usageAnswersParseMicrosecondDatesAndWindowLengths() throws {
         let now = Date(timeIntervalSince1970: 1_793_700_000)
         let claude =
-            #"{"five_hour":{"utilization":13.0,"resets_at":"2026-11-03T04:59:59.580758+00:00"},"seven_day":null,"iguana_necktie":{"utilization":67}}"#
-        let windows = try #require(QuotaParser.claudeUsage(Data(claude.utf8), observedAt: now))
+            #"{"cachedUsageUtilization":{"fetchedAtMs":1793700000000,"utilization":{"five_hour":{"utilization":13.0,"resets_at":"2026-11-03T04:59:59.580758+00:00"},"seven_day":null,"iguana_necktie":{"utilization":67}}}}"#
+        let windows = try #require(QuotaParser.claudeCache(Data(claude.utf8))?.windows)
         #expect(windows.map(\.id) == ["five_hour"])
-        #expect(windows.first?.source == .live)
         let reset = try #require(windows.first?.resetsAt)
         #expect(abs(reset.timeIntervalSince1970 - 1_793_681_999.58) < 0.01)
 

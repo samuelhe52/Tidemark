@@ -12,6 +12,7 @@ import Foundation
 ///
 /// Native sign-ins stay read-only. Managed CC Switch Codex accounts may renew their OAuth
 /// tokens and write rotations back to the owner store; access tokens are cached in memory only.
+/// Live Claude usage comes from Claude Code itself, which owns its token and its renewal.
 public actor UsageService {
     private let environment: UsageEnvironment
     private let sources: LocalSources
@@ -21,8 +22,8 @@ public actor UsageService {
     private var liveEnabled: Bool
     private var gate = LiveRequestGate()
     private var lastLive: [String: LiveOutcome] = [:]
-    /// Services whose Keychain read was refused; retried only when the user asks.
-    private var keychainRefused: Set<QuotaService> = []
+    /// The native Codex Keychain read was refused; retried only when the user asks.
+    private var codexKeychainRefused = false
     /// Codex's configured credential store, read once per refresh pass.
     private var codexStore = CodexCredentialStore.file
     private var lastCodexAccountID: String?
@@ -66,7 +67,7 @@ public actor UsageService {
     }
 
     private func performRefresh(userInitiated: Bool) async -> [ServiceUsage] {
-        if userInitiated { keychainRefused.removeAll() }
+        if userInitiated { codexKeychainRefused = false }
         if store == nil { store = SnapshotStore(url: environment.snapshotFile).load() }
         let before = store
         let claude = await claudeUsage(userInitiated: userInitiated)
@@ -85,13 +86,13 @@ public actor UsageService {
         if let cache = file.cache,
             cache.accountUUID == nil || identity.accountUUID == nil || cache.accountUUID == identity.accountUUID
         {
-            candidates.append(Observation(windows: cache.windows))
+            candidates.append(Observation(windows: cache.windows, plan: identity.plan))
         }
         // The tap names no account. Trust it only for readings taken since this account was seen.
         if claudeIdentity?.id != id { claudeIdentity = (id, claudeIdentity == nil ? .distantPast : environment.now()) }
         let tap = Observation(windows: sources.claudeStatusline())
         if !tap.windows.isEmpty, tap.observedAt >= claudeIdentity?.since ?? .distantPast { candidates.append(tap) }
-        let reading = await live(.claude, accountID: id, userInitiated: userInitiated)
+        let reading = await liveClaude(accountID: id, accountUUID: identity.accountUUID, userInitiated: userInitiated)
         let account = resolve(
             id: id, service: .claude, email: identity.email, isActive: true, candidates: candidates + reading.candidates,
             liveIssue: reading.issue, passiveIssue: file.issue)
@@ -144,7 +145,7 @@ public actor UsageService {
         var activeIssue: QuotaReadIssue?
         if liveEnabled {
             let reading = await live(
-                .codex, accountID: activeKey, userInitiated: userInitiated, managed: activeManaged, nativeAllowed: true)
+                accountID: activeKey, userInitiated: userInitiated, managed: activeManaged, nativeAllowed: true)
             activeCandidates = reading.candidates
             activeIssue = reading.issue
             // A native credential may be the first source to reveal the workspace.
@@ -163,7 +164,7 @@ public actor UsageService {
                 candidates: activeCandidates, liveIssue: activeIssue, passiveIssue: rollout.issue)
         ]
         for account in managed where account.localID != activeManaged?.localID {
-            let reading = await live(.codex, accountID: account.key, userInitiated: userInitiated, managed: account)
+            let reading = await live(accountID: account.key, userInitiated: userInitiated, managed: account)
             accounts.append(
                 resolve(
                     id: account.key, service: .codex, email: account.email, isActive: false,
@@ -202,7 +203,6 @@ public actor UsageService {
 
     // MARK: - Live requests
 
-    private static let claudeUsageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private static let codexUsageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
     private enum LiveOutcome {
@@ -235,23 +235,55 @@ public actor UsageService {
         let value: String
         let expiry: Date?
         var accountID: String?
-        var plan: String?
         var userIdentity: String?
     }
 
-    /// Sends one live request when live usage is on and the account's gate allows; otherwise
-    /// repeats the last outcome for this account.
+    /// Asks Claude Code to refresh its usage cache when live usage is on and the account's gate
+    /// allows, then accepts the cache only if it was refreshed for this account; otherwise repeats
+    /// the last outcome for this account.
+    private func liveClaude(accountID: String, accountUUID: String?, userInitiated: Bool) async -> LiveReading {
+        guard liveEnabled else { return LiveReading(nil) }
+        let now = environment.now()
+        guard gate.allows(accountID, now: now, userInitiated: userInitiated) else {
+            return LiveReading(lastLive[accountID])
+        }
+        let outcome: LiveOutcome
+        if let accountUUID {
+            switch await environment.claudeUsage.run() {
+            case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
+            case .timedOut: outcome = fail(.requestFailed, key: accountID, now: now).0
+            case .finished:
+                // A cache older than the run means Claude Code could not refresh it, for
+                // example because its sign-in needs renewing.
+                let file = sources.claudeFile()
+                if file.identity.accountUUID == accountUUID, let cache = file.cache, cache.accountUUID == accountUUID,
+                    let fetched = cache.windows.first?.observedAt, fetched >= now.addingTimeInterval(-5)
+                {
+                    gate.recordSuccess(accountID, now: now)
+                    outcome = .observed(Observation(windows: cache.windows, plan: file.identity.plan))
+                } else {
+                    outcome = fail(.requestFailed, key: accountID, now: now).0
+                }
+            }
+        } else {
+            outcome = fail(.signedOut, key: accountID, now: now).0
+        }
+        lastLive[accountID] = outcome
+        return LiveReading(outcome)
+    }
+
+    /// Sends one Codex live request when live usage is on and the account's gate allows;
+    /// otherwise repeats the last outcome for this account.
     private func live(
-        _ service: QuotaService, accountID: String, userInitiated: Bool,
-        managed: LocalSources.ManagedCodexAccount? = nil, nativeAllowed: Bool = false
+        accountID: String, userInitiated: Bool, managed: LocalSources.ManagedCodexAccount? = nil,
+        nativeAllowed: Bool = false
     ) async -> LiveReading {
         guard liveEnabled else { return LiveReading(nil) }
         let now = environment.now()
-        guard managed != nil || !keychainRefused.contains(service),
+        guard managed != nil || !codexKeychainRefused,
             gate.allows(accountID, now: now, userInitiated: userInitiated)
         else { return LiveReading(lastLive[accountID]) }
-        let (outcome, key) = await request(
-            service, accountID: accountID, now: now, managed: managed, nativeAllowed: nativeAllowed)
+        let (outcome, key) = await request(accountID: accountID, now: now, managed: managed, nativeAllowed: nativeAllowed)
         lastLive[key] = outcome
         return LiveReading(outcome)
     }
@@ -259,8 +291,7 @@ public actor UsageService {
     /// Returns the outcome and the account key it was recorded under: a Codex token can name a
     /// different account than the caller expected, and its gate and outcome belong to that account.
     private func request(
-        _ service: QuotaService, accountID: String, now: Date,
-        managed: LocalSources.ManagedCodexAccount?, nativeAllowed: Bool
+        accountID: String, now: Date, managed: LocalSources.ManagedCodexAccount?, nativeAllowed: Bool
     ) async -> (LiveOutcome, String) {
         let credential: CredentialResult
         var usedNative = false
@@ -279,7 +310,7 @@ public actor UsageService {
                 }
             }
         } else {
-            credential = service == .claude ? claudeCredential() : codexCredential()
+            credential = codexCredential()
         }
         guard liveEnabled else {
             await managedCredentials.clear()
@@ -289,11 +320,11 @@ public actor UsageService {
         switch credential {
         case .token(let value): token = value
         case .failed(let issue):
-            if issue == .accessDenied, managed == nil { keychainRefused.insert(service) }
+            if issue == .accessDenied, managed == nil { codexKeychainRefused = true }
             return fail(issue, key: accountID, now: now)
         }
         var key = accountID
-        if service == .codex, managed == nil, let resolved = token.accountID {
+        if managed == nil, let resolved = token.accountID {
             lastCodexAccountID = resolved
             lastCodexIdentity = token.userIdentity
             key = AccountKey.codex(resolved)
@@ -305,13 +336,13 @@ public actor UsageService {
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await environment.transport.data(for: Self.usageRequest(service, token: token))
+            (data, response) = try await environment.transport.data(for: Self.usageRequest(token: token))
         } catch {
             return fail(.requestFailed, key: key, now: now)
         }
         switch response.statusCode {
         case 200..<300:
-            guard let observation = observation(service, data: data, token: token), !observation.windows.isEmpty
+            guard let observation = observation(data: data), !observation.windows.isEmpty
             else { return fail(.requestFailed, key: key, now: now) }
             gate.recordSuccess(key, now: now)
             return (.observed(observation), key)
@@ -340,18 +371,10 @@ public actor UsageService {
         return (.failed(issue), key)
     }
 
-    private static func usageRequest(_ service: QuotaService, token: AccessToken) -> URLRequest {
-        var request: URLRequest
-        switch service {
-        case .claude:
-            request = URLRequest(url: claudeUsageURL)
-            request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-            request.setValue("Tidemark", forHTTPHeaderField: "User-Agent")
-        case .codex:
-            request = URLRequest(url: codexUsageURL)
-            if let account = token.accountID { request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id") }
-            request.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
-        }
+    private static func usageRequest(token: AccessToken) -> URLRequest {
+        var request = URLRequest(url: codexUsageURL)
+        if let account = token.accountID { request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id") }
+        request.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
         request.setValue("Bearer \(token.value)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
@@ -359,52 +382,22 @@ public actor UsageService {
     }
 
     /// The usage answer as an observation; nil when it is not a usage object.
-    private func observation(_ service: QuotaService, data: Data, token: AccessToken) -> Observation? {
-        let observedAt = environment.now()
-        switch service {
-        case .claude:
-            return QuotaParser.claudeUsage(data, observedAt: observedAt).map { Observation(windows: $0, plan: token.plan) }
-        case .codex:
-            return QuotaParser.codexUsage(data, observedAt: observedAt).map {
-                Observation(windows: $0.windows, email: $0.email, plan: $0.plan)
-            }
+    private func observation(data: Data) -> Observation? {
+        QuotaParser.codexUsage(data, observedAt: environment.now()).map {
+            Observation(windows: $0.windows, email: $0.email, plan: $0.plan)
         }
     }
 
     // MARK: - Credentials (read-only)
 
-    /// Claude Code's sign-in: the `Claude Code-credentials` Keychain item, else `~/.claude/.credentials.json`.
-    private func claudeCredential() -> CredentialResult {
-        let data: Data
-        do {
-            if let item = try environment.credentials.genericPassword(service: "Claude Code-credentials", account: nil)
-            {
-                data = item
-            } else if let file = try? LocalSources.bounded(environment.claudeCredentialsFile, maximumBytes: 1024 * 1024)
-            {
-                data = file
-            } else {
-                return .failed(.signedOut)
-            }
-        } catch {
-            return .failed(.accessDenied)
-        }
-        guard let root = QuotaParser.object(data),
-            let oauth = (root["claudeAiOauth"] ?? root["claude.ai_oauth"]) as? [String: Any],
-            let value = oauth["accessToken"] as? String, !value.isEmpty
-        else { return .failed(.signedOut) }
-        let expiry = QuotaParser.number(oauth["expiresAt"]).map { Date(timeIntervalSince1970: $0 / 1000) }
-        return .token(AccessToken(value: value, expiry: expiry, plan: oauth["subscriptionType"] as? String))
-    }
-
     /// The native Codex sign-in, unless a Keychain read was refused; a refusal is remembered
     /// until the user asks to retry, so a denied prompt never reappears on its own.
     private func nativeCodexCredential() -> AccessToken? {
-        guard !keychainRefused.contains(.codex) else { return nil }
+        guard !codexKeychainRefused else { return nil }
         switch codexCredential() {
         case .token(let token): return token
         case .failed(let issue):
-            if issue == .accessDenied { keychainRefused.insert(.codex) }
+            if issue == .accessDenied { codexKeychainRefused = true }
             return nil
         }
     }

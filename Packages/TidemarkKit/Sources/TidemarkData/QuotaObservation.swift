@@ -120,6 +120,8 @@ public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     case credentialSaveFailed
     /// The Keychain read was denied or cancelled, or the service answered 401/403.
     case accessDenied
+    /// Live Claude usage needs Claude Code, and no `claude` executable was found.
+    case cliUnavailable
     /// The service answered 429, or Tidemark is backing off after it.
     case rateLimited
     /// Network error, server error, or an unreadable answer.

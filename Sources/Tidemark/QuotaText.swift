@@ -74,7 +74,11 @@ enum QuotaText {
         case .credentialSaveFailed: String(localized: "Couldn't save the renewed sign-in. Check CC Switch.")
         case .accessDenied: String(localized: "Access was denied")
         case .rateLimited: String(localized: "Rate limited. Tidemark will retry later.")
-        case .requestFailed: String(localized: "Couldn't reach the usage service")
+        case .cliUnavailable: String(localized: "Claude Code wasn't found. Install it to see live usage.")
+        case .requestFailed:
+            service == .claude
+                ? String(localized: "Claude Code couldn't refresh usage. Open it to check the sign-in.")
+                : String(localized: "Couldn't reach the usage service")
         case .notObserved: String(localized: "Not seen in use yet")
         }
     }

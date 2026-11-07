@@ -45,12 +45,6 @@ enum QuotaParser {
         return claudeWindows(limits, observedAt: Date(timeIntervalSince1970: received), source: .statusline)
     }
 
-    /// The body of `GET api/oauth/usage`; nil when it is not a usage object.
-    static func claudeUsage(_ data: Data, observedAt: Date) -> [QuotaWindow]? {
-        guard let root = object(data) else { return nil }
-        return claudeWindows(root, observedAt: observedAt, source: .live)
-    }
-
     static func codexEvent(_ data: Data) -> [QuotaWindow] {
         guard let root = object(data), root["type"] as? String == "event_msg",
             let payload = root["payload"] as? [String: Any], payload["type"] as? String == "token_count",

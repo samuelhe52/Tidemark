@@ -27,11 +27,13 @@ public struct UsageEnvironment: Sendable {
     public var supportDirectory: URL
     public var credentials: any CredentialStore
     public var transport: any HTTPTransport
+    /// Asks Claude Code to refresh its usage cache; Claude's credentials are never read.
+    public var claudeUsage: any ClaudeUsageCommand
     public var now: @Sendable () -> Date
 
     public init(
         home: URL, codexHome: URL, ccSwitchHome: URL, supportDirectory: URL, credentials: any CredentialStore,
-        transport: any HTTPTransport, now: @escaping @Sendable () -> Date
+        transport: any HTTPTransport, claudeUsage: any ClaudeUsageCommand, now: @escaping @Sendable () -> Date
     ) {
         self.home = home
         self.codexHome = codexHome
@@ -39,10 +41,12 @@ public struct UsageEnvironment: Sendable {
         self.supportDirectory = supportDirectory
         self.credentials = credentials
         self.transport = transport
+        self.claudeUsage = claudeUsage
         self.now = now
     }
 
-    /// The real paths (honoring `$CODEX_HOME`), the login Keychain, and an uncached URL session.
+    /// The real paths (honoring `$CODEX_HOME`), the login Keychain, an uncached URL session, and
+    /// the installed `claude`.
     public static var current: UsageEnvironment {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].nonEmpty.map {
@@ -52,7 +56,8 @@ public struct UsageEnvironment: Sendable {
             home: home, codexHome: codexHome ?? home.appending(path: ".codex"),
             ccSwitchHome: home.appending(path: ".cc-switch"),
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
-            credentials: KeychainCredentialStore(), transport: URLSessionTransport.shared, now: { Date() })
+            credentials: KeychainCredentialStore(), transport: URLSessionTransport.shared,
+            claudeUsage: ClaudeCLIUsageCommand(home: home), now: { Date() })
     }
 }
 
@@ -61,8 +66,6 @@ public struct UsageEnvironment: Sendable {
 extension UsageEnvironment {
     /// Claude Code's state: the signed-in account and its usage cache.
     var claudeStateFile: URL { home.appending(path: ".claude.json") }
-    /// Claude Code's sign-in when it is not in the Keychain.
-    var claudeCredentialsFile: URL { home.appending(path: ".claude/.credentials.json") }
     var codexSessionsDirectory: URL { codexHome.appending(path: "sessions") }
     var codexAuthFile: URL { codexHome.appending(path: "auth.json") }
     var codexConfigFile: URL { codexHome.appending(path: "config.toml") }

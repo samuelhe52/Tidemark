@@ -194,7 +194,7 @@ credentials. Live sources are an opt-in setting.
 | Claude | Passive | `~/.claude.json` `cachedUsageUtilization {fetchedAtMs, accountUuid, utilization}`; `fetchedAtMs` is the capture time |
 | Claude | Passive | The statusline tap (3.2) |
 | Codex | Passive | Newest `token_count.rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (3.3) |
-| Claude | Live, opt-in | Keychain item `Claude Code-credentials`, falling back to `~/.claude/.credentials.json`; `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20` |
+| Claude | Live, opt-in | Run `claude -p /usage` with CC Switch's isolation flags, then reread `~/.claude.json`; the cache counts only when its `accountUuid` is the signed-in account and it was fetched during the run. Tidemark reads no Claude credential. See [008](../008-claude-usage-via-cli/000-plan.md). |
 | Codex | Live, opt-in | The store `cli_auth_credentials_store` in `$CODEX_HOME/config.toml` names: `auth.json` (default `file`), Keychain item `Codex Auth`, account `cli\|<first 16 hex of SHA-256(codex home)>` (`keyring`), or both (`auto`); `https://chatgpt.com/backend-api/wham/usage` with `ChatGPT-Account-Id` (the upstream workspace ID) and `User-Agent: codex-cli` |
 | Codex managed accounts | Live, opt-in | CC Switch's `~/.cc-switch/codex_oauth_auth.json` v2; reuse each account's refresh token to obtain an access token and query `wham/usage`, independently of the active provider. See [003](../003-direct-multi-account-quota/000-plan.md). |
 
@@ -210,7 +210,9 @@ credentials. Live sources are an opt-in setting.
   rotation is retained in memory for write-back retry; exiting before it is saved
   can still lose that rotation.
 - Expired native access tokens are never sent. Managed Codex accounts can renew
-  them; expired Claude sign-ins and rejected renewals report `credentialExpired`.
+  them; rejected renewals report `credentialExpired`. Claude Code renews its own
+  token during the `/usage` run; a missing `claude` reports `cliUnavailable`, and a
+  run that did not refresh the cache reports `requestFailed`.
 - Live requests are gated per account: at most every 5 minutes automatically, 20 s
   when the user refreshes, `Retry-After` on 429, otherwise exponential backoff from
   60 s to 30 min with ±20 % jitter. A user refresh never skips a backoff.
@@ -421,7 +423,8 @@ struct QuotaWindow: Codable {
 ## 6. Out of scope
 
 - Tidemark never writes CC Switch's database or switches providers, and never
-  writes `~/.codex/auth.json`, `~/.claude`, or Keychain items.
+  writes `~/.codex/auth.json`, `~/.claude`, or Keychain items. With Live Usage on,
+  the Claude Code it runs may renew its own token and rewrite its own files.
 - No agent activity tracking in the first version; the orb does not show "working".
 - No orb mood (quota pressure shown through motion and color), and no pace
   heuristic. Deferred by the maintainer.
