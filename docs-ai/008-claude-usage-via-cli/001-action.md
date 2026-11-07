@@ -15,13 +15,16 @@
   `oauthAccount.accountUuid` and the cache's `accountUuid` match the signed-in account
   and `fetchedAtMs` is under 60 s old when the run ends (see [002](002-cache-freshness.md)). Anything else counts
   as a gate failure with backoff.
-- `ClaudeCLIUsageCommand` finds `claude` in known install paths, or else through one
-  interactive login-shell `command -v claude`. It runs with CC Switch's arguments,
+- `ClaudeCLIUsageCommand` finds `claude` in known install paths, or else through an
+  interactive login-shell `command -v claude` whose answer is kept while it stays
+  executable (see [003](003-run-hardening.md)). It runs with CC Switch's arguments,
   cwd `~`, discarded stdio, and a 45 s timeout (terminate, then `SIGKILL`). Before
-  running, it strips `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
-  and the Anthropic key/token/base-URL variables. It prefixes `PATH` with the
-  executable's directory, its resolved directory, and the Homebrew and
-  `/usr/local` bin directories.
+  running, it strips `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`,
+  the Anthropic key/token/base-URL variables, and the inherited Claude Code session
+  and Bedrock/Vertex variables, and sets `CLAUDE_CODE_DISABLE_AUTO_MEMORY`,
+  `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_AUTOUPDATER` to 1. It
+  prefixes `PATH` with the executable's directory, its resolved directory, and the
+  Homebrew and `/usr/local` bin directories.
 - New issue `QuotaReadIssue.cliUnavailable`. For Claude, `requestFailed` now reads
   "Claude Code couldn't refresh usage. Open it to check the sign-in."
 - The Claude plan comes from `oauthAccount.organizationType` without its `claude_`
@@ -56,6 +59,10 @@ Key files:
 | `make run` with Live Usage on | About 2 s after launch, `~/.claude.json` `fetchedAtMs` was 0.7 s old; no `claude -p /usage` process remained. |
 
 ## Open questions
+
+- Each run is another Claude Code process that may rewrite `~/.claude.json` while the
+  user's sessions also write it. Whether that can lose or corrupt their writes is
+  not verified. Tidemark runs at most every 5 min; CC Switch uses 10 min.
 
 - Not checked: whether macOS shows a Keychain prompt after the next Claude token
   renewal. That needs an expiry to happen. Tidemark no longer reads a Claude

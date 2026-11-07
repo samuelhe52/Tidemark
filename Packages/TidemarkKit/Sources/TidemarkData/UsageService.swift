@@ -256,7 +256,9 @@ public actor UsageService {
             return LiveReading(outcome)
         }
         if let observation = currentClaudeReading(for: accountUUID, now: now) {
-            // Claude Code would not rewrite a cache this young, so a run would add nothing.
+            // Claude Code would not rewrite a cache this young, so a run would add nothing. It
+            // counts as a live reading, so it also ends any backoff and restarts the interval.
+            gate.recordSuccess(accountID, now: now)
             let outcome = LiveOutcome.observed(observation)
             lastLive[accountID] = outcome
             return LiveReading(outcome)
@@ -264,8 +266,11 @@ public actor UsageService {
         guard gate.allows(accountID, now: now, userInitiated: userInitiated) else {
             return LiveReading(lastLive[accountID])
         }
+        let run = await environment.claudeUsage.run()
+        // Live usage was turned off during the run.
+        guard liveEnabled else { return LiveReading(nil) }
         let outcome: LiveOutcome
-        switch await environment.claudeUsage.run() {
+        switch run {
         case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
         case .timedOut: outcome = fail(.requestFailed, key: accountID, now: now).0
         case .finished:

@@ -60,6 +60,10 @@ struct LiveUsageTests {
         let account = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
         #expect(account.issue == nil && account.windows.first?.usedPercent == 42)
         #expect(fixture.claudeUsage.runs == 0)
+        // That reading restarts the automatic interval, so an older cache soon after waits for it.
+        clock.now = now + 90
+        _ = await service.refresh(userInitiated: false)
+        #expect(fixture.claudeUsage.runs == 0)
     }
 
     @Test func cacheOneMinuteOldIsNotCurrentSoClaudeCodeIsAsked() async throws {

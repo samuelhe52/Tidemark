@@ -93,3 +93,4 @@ ordinary use in those days, so the passive cache alone is not a live source.
 
 ## Amendments
 - Updated 2026-11-07: the run is accepted only when the cache is under 60 s old at the end, and a young cache skips the run — see [002-cache-freshness.md](002-cache-freshness.md)
+- Updated 2026-11-08: the login-shell lookup is now cached as this plan intended, and the run is hardened — see [003-run-hardening.md](003-run-hardening.md)

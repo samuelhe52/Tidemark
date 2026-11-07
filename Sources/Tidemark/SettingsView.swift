@@ -158,7 +158,7 @@ struct UsageSettingsView: View {
                 Toggle("Live usage", isOn: $settings.liveUsageEnabled)
             } footer: {
                 Text(
-                    "Fetch current quotas using existing sign-ins. Managed CC Switch Codex sign-ins may be renewed and saved. When off, Tidemark uses local readings."
+                    "Fetch current quotas using existing sign-ins. For Claude, Tidemark runs Claude Code in the background every few minutes. Managed CC Switch Codex sign-ins may be renewed and saved. When off, Tidemark uses local readings."
                 )
             }
             Section("Display") {

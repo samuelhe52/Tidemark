@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 /// How a request to Claude Code to refresh its usage cache ended.
 public enum ClaudeUsageRun: Equatable, Sendable {
@@ -28,6 +29,12 @@ public protocol ClaudeUsageCommand: Sendable {
 /// Runs `claude -p /usage` in the default config directory, the way CC Switch does.
 struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     let home: URL
+    /// Where the login shell found `claude`, so the user's startup files run once, not on every run.
+    private let shellFound = ShellAnswer()
+
+    init(home: URL) {
+        self.home = home
+    }
 
     static let timeout: Duration = .seconds(45)
     static let lookupTimeout: Duration = .seconds(10)
@@ -58,12 +65,15 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         var environment = ProcessInfo.processInfo.environment
         for key in [
             "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"
+            "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
+            // Inherited when Tidemark is started from a Claude Code session or a cloud setup.
+            "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"
         ] {
             environment[key] = nil
         }
-        for key in ["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER"]
-        {
+        for key in [
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER"
+        ] {
             environment[key] = "1"
         }
         // A Node install's `claude` runs `env node`, which sits beside it.
@@ -78,46 +88,58 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     }
 
     /// Known install locations first; a GUI app's `PATH` rarely includes them. Then the user's
-    /// login shell, which knows where they installed it.
+    /// login shell, which knows where they installed it. The shell's answer is kept while it
+    /// stays executable.
     private func locate() async -> URL? {
-        let candidates = [
-            ".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude"
-        ].map { home.appending(path: $0).path } + ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+        let candidates =
+            [
+                ".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude"
+            ].map { home.appending(path: $0).path } + ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         if let found = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) {
             return URL(fileURLWithPath: found)
         }
-        return await shellLookup()
+        if let cached = shellFound.path.withLock({ $0 }), FileManager.default.isExecutableFile(atPath: cached.path) {
+            return cached
+        }
+        let found = await shellLookup()
+        shellFound.path.withLock { $0 = found }
+        return found
     }
 
     private func shellLookup() async -> URL? {
         let shell = ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
+        // The answer goes to a file, so nothing the startup files print can mix with it or fill a pipe.
+        let answer = FileManager.default.temporaryDirectory.appending(path: "tidemark-claude-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: answer) }
         let process = Process()
-        let output = Pipe()
         process.executableURL = URL(fileURLWithPath: shell)
-        // Interactive, so paths added in `.zshrc` count. A marker separates the answer from
-        // anything the shell's startup files print.
-        process.arguments = ["-l", "-i", "-c", "printf '\\n__tidemark__%s\\n' \"$(command -v claude)\""]
+        // Interactive, so paths added in `.zshrc` count.
+        process.arguments = ["-l", "-i", "-c", #"command -v claude > "$TIDEMARK_ANSWER""#]
+        var environment = ProcessInfo.processInfo.environment
+        environment["TIDEMARK_ANSWER"] = answer.path
+        process.environment = environment
         process.currentDirectoryURL = home
         process.standardInput = FileHandle.nullDevice
-        process.standardOutput = output
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil, await Self.wait(for: process, timeout: Self.lookupTimeout) else {
-            return nil
-        }
-        let data = (try? output.fileHandleForReading.readToEnd()) ?? Data()
-        let path = String(decoding: data, as: UTF8.self).split(separator: "\n")
-            .last { $0.hasPrefix("__tidemark__") }?.dropFirst("__tidemark__".count)
-        guard let path, path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: String(path)) else {
-            return nil
-        }
-        return URL(fileURLWithPath: String(path))
+        guard (try? process.run()) != nil, await Self.wait(for: process, timeout: Self.lookupTimeout),
+            let data = try? LocalSources.bounded(answer, maximumBytes: 4096)
+        else { return nil }
+        let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
-    /// Whether the process exited within `timeout`; otherwise it is terminated, then killed.
+    /// Whether the process exited within `timeout`; otherwise it is terminated, then killed. A
+    /// cancelled task terminates it at once rather than spinning, since its sleeps no longer wait.
     private static func wait(for process: Process, timeout: Duration) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
         while process.isRunning {
+            if Task.isCancelled {
+                process.terminate()
+                return false
+            }
             guard clock.now < deadline else {
                 process.terminate()
                 try? await Task.sleep(for: .seconds(2))
@@ -128,4 +150,9 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         }
         return true
     }
+}
+
+/// Shared by every copy of the command, so a path found once is reused.
+fileprivate final class ShellAnswer: Sendable {
+    let path = Mutex<URL?>(nil)
 }
