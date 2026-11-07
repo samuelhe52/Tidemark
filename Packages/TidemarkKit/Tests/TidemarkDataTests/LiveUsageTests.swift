@@ -36,7 +36,7 @@ struct LiveUsageTests {
         try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 86400, used: 10), to: ".claude.json")
         fixture.claudeUsage.respond = { [fixture] in
             _ = try? fixture.write(
-                Fixture.claudeState(account: "A", fetchedAt: clock.now + 1, used: 21, plan: "claude_max"),
+                Fixture.claudeState(account: "A", fetchedAt: clock.now, used: 21, plan: "claude_max"),
                 to: ".claude.json")
             return .finished
         }
@@ -49,6 +49,27 @@ struct LiveUsageTests {
         // The gate still limits runs.
         clock.now = now + 60
         _ = await service.refresh(userInitiated: false)
+        #expect(fixture.claudeUsage.runs == 1)
+    }
+
+    @Test func currentClaudeCacheIsUsedWithoutRunningClaudeCode() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 30, used: 42), to: ".claude.json")
+        let service = fixture.service(live: true, clock: clock)
+        let account = try #require(await service.refresh(userInitiated: true).first?.accounts.first)
+        #expect(account.issue == nil && account.windows.first?.usedPercent == 42)
+        #expect(fixture.claudeUsage.runs == 0)
+    }
+
+    @Test func cacheOneMinuteOldIsNotCurrentSoClaudeCodeIsAsked() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 60, used: 42), to: ".claude.json")
+        fixture.claudeUsage.respond = { .finished }
+        let account = try #require(
+            await fixture.service(live: true, clock: clock).refresh(userInitiated: true).first?.accounts.first)
+        #expect(account.issue == .requestFailed)
         #expect(fixture.claudeUsage.runs == 1)
     }
 
@@ -145,7 +166,8 @@ struct LiveUsageTests {
             to: "Library/Application Support/Tidemark/claude-rate-limits.json")
         try fixture.write(#"{"oauthAccount":{"accountUuid":"A"}}"#, to: ".claude.json")
         fixture.claudeUsage.respond = { [fixture] in
-            _ = try? fixture.write(Fixture.claudeState(account: "A", fetchedAt: clock.now, used: 10), to: ".claude.json")
+            _ = try? fixture.write(
+                Fixture.claudeState(account: "A", fetchedAt: clock.now, used: 10), to: ".claude.json")
             return .finished
         }
         let services = await fixture.service(live: true, clock: clock).refresh(userInitiated: true)

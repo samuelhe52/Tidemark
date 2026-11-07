@@ -94,7 +94,8 @@ public actor UsageService {
         if !tap.windows.isEmpty, tap.observedAt >= claudeIdentity?.since ?? .distantPast { candidates.append(tap) }
         let reading = await liveClaude(accountID: id, accountUUID: identity.accountUUID, userInitiated: userInitiated)
         let account = resolve(
-            id: id, service: .claude, email: identity.email, isActive: true, candidates: candidates + reading.candidates,
+            id: id, service: .claude, email: identity.email, isActive: true,
+            candidates: candidates + reading.candidates,
             liveIssue: reading.issue, passiveIssue: file.issue)
         return ServiceUsage(service: .claude, accounts: [account])
     }
@@ -238,38 +239,59 @@ public actor UsageService {
         var userIdentity: String?
     }
 
-    /// Asks Claude Code to refresh its usage cache when live usage is on and the account's gate
-    /// allows, then accepts the cache only if it was refreshed for this account; otherwise repeats
-    /// the last outcome for this account.
+    /// Claude Code rewrites its usage cache only once the cache is at least this old, so a younger
+    /// cache is already current. This is Claude Code's own threshold (`je = 60000` in its bundle).
+    static let claudeCacheFreshness: TimeInterval = 60
+
+    /// Live Claude usage. A cache younger than `claudeCacheFreshness` is current and is used as it
+    /// is. Otherwise Claude Code is asked to refresh it, when the account's gate allows, and the
+    /// result is accepted only if the cache is current afterwards. Failing that, the last outcome
+    /// for this account is repeated.
     private func liveClaude(accountID: String, accountUUID: String?, userInitiated: Bool) async -> LiveReading {
         guard liveEnabled else { return LiveReading(nil) }
         let now = environment.now()
+        guard let accountUUID else {
+            let (outcome, _) = fail(.signedOut, key: accountID, now: now)
+            lastLive[accountID] = outcome
+            return LiveReading(outcome)
+        }
+        if let observation = currentClaudeReading(for: accountUUID, now: now) {
+            // Claude Code would not rewrite a cache this young, so a run would add nothing.
+            let outcome = LiveOutcome.observed(observation)
+            lastLive[accountID] = outcome
+            return LiveReading(outcome)
+        }
         guard gate.allows(accountID, now: now, userInitiated: userInitiated) else {
             return LiveReading(lastLive[accountID])
         }
         let outcome: LiveOutcome
-        if let accountUUID {
-            switch await environment.claudeUsage.run() {
-            case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
-            case .timedOut: outcome = fail(.requestFailed, key: accountID, now: now).0
-            case .finished:
-                // A cache older than the run means Claude Code could not refresh it, for
-                // example because its sign-in needs renewing.
-                let file = sources.claudeFile()
-                if file.identity.accountUUID == accountUUID, let cache = file.cache, cache.accountUUID == accountUUID,
-                    let fetched = cache.windows.first?.observedAt, fetched >= now.addingTimeInterval(-5)
-                {
-                    gate.recordSuccess(accountID, now: now)
-                    outcome = .observed(Observation(windows: cache.windows, plan: file.identity.plan))
-                } else {
-                    outcome = fail(.requestFailed, key: accountID, now: now).0
-                }
+        switch await environment.claudeUsage.run() {
+        case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
+        case .timedOut: outcome = fail(.requestFailed, key: accountID, now: now).0
+        case .finished:
+            // Judged when the run ends. A cache Claude Code did not rewrite still counts if it is current.
+            let finished = environment.now()
+            if let observation = currentClaudeReading(for: accountUUID, now: finished) {
+                gate.recordSuccess(accountID, now: finished)
+                outcome = .observed(observation)
+            } else {
+                outcome = fail(.requestFailed, key: accountID, now: finished).0
             }
-        } else {
-            outcome = fail(.signedOut, key: accountID, now: now).0
         }
         lastLive[accountID] = outcome
         return LiveReading(outcome)
+    }
+
+    /// The signed-in account's Claude Code usage cache, when it was written less than
+    /// `claudeCacheFreshness` before `now`. A cache dated in the future is never trusted.
+    private func currentClaudeReading(for accountUUID: String, now: Date) -> Observation? {
+        let file = sources.claudeFile()
+        guard file.identity.accountUUID == accountUUID, let cache = file.cache,
+            cache.accountUUID == accountUUID, let fetched = cache.windows.first?.observedAt
+        else { return nil }
+        let age = now.timeIntervalSince(fetched)
+        guard age >= 0, age < Self.claudeCacheFreshness else { return nil }
+        return Observation(windows: cache.windows, plan: file.identity.plan)
     }
 
     /// Sends one Codex live request when live usage is on and the account's gate allows;
@@ -283,7 +305,8 @@ public actor UsageService {
         guard managed != nil || !codexKeychainRefused,
             gate.allows(accountID, now: now, userInitiated: userInitiated)
         else { return LiveReading(lastLive[accountID]) }
-        let (outcome, key) = await request(accountID: accountID, now: now, managed: managed, nativeAllowed: nativeAllowed)
+        let (outcome, key) = await request(
+            accountID: accountID, now: now, managed: managed, nativeAllowed: nativeAllowed)
         lastLive[key] = outcome
         return LiveReading(outcome)
     }

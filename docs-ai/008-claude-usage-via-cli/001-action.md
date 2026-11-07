@@ -13,7 +13,7 @@
   under the same per-account `LiveRequestGate` as before. It then rereads
   `~/.claude.json` and accepts the cache as an observation only if both
   `oauthAccount.accountUuid` and the cache's `accountUuid` match the signed-in account
-  and `fetchedAtMs` is no more than 5 s before the run started. Anything else counts
+  and `fetchedAtMs` is under 60 s old when the run ends (see [002](002-cache-freshness.md)). Anything else counts
   as a gate failure with backoff.
 - `ClaudeCLIUsageCommand` finds `claude` in known install paths, or else through one
   interactive login-shell `command -v claude`. It runs with CC Switch's arguments,
