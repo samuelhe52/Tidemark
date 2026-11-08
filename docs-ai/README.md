@@ -15,7 +15,7 @@ fixes. Ordinary tasks do not need numbered documentation.
 | 005 | 2026-11-03 | [Glass dock tab that morphs into the orb](005-glass-dock-morph/000-plan.md) | Implemented — runtime morph check pending | [Action record](005-glass-dock-morph/001-action.md) |
 | 006 | 2026-11-03 | [Companion settings](006-settings/000-plan.md) | Implemented — runtime verification pending | [Action record](006-settings/001-action.md) |
 | 007 | 2026-11-03 | [Request logs in the dashboard](007-request-logs/000-plan.md) | Implemented — runtime check partly pending | [Action record](007-request-logs/001-action.md), [review fixes](007-request-logs/002-review-fixes.md), [UI and model names](007-request-logs/003-ui-and-model-names.md), [gesture routing](007-request-logs/004-gesture-routing.md) |
-| 008 | 2026-11-07 | [Live Claude usage through Claude Code](008-claude-usage-via-cli/000-plan.md) | Implemented — post-renewal prompt check pending | [Action record](008-claude-usage-via-cli/001-action.md), [cache freshness](008-claude-usage-via-cli/002-cache-freshness.md), [run hardening](008-claude-usage-via-cli/003-run-hardening.md) |
+| 008 | 2026-11-07 | [Live Claude usage through Claude Code](008-claude-usage-via-cli/000-plan.md) | Implemented — post-renewal prompt check pending | [Action record](008-claude-usage-via-cli/001-action.md), [cache freshness](008-claude-usage-via-cli/002-cache-freshness.md), [run hardening](008-claude-usage-via-cli/003-run-hardening.md), [proxy routing](008-claude-usage-via-cli/004-proxy-routing.md) |
 
 ## Find a contract or source
 

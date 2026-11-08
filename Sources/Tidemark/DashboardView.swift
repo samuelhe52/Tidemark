@@ -155,7 +155,7 @@ final class DashboardView: NSView {
         spinner.isHidden = !refreshing
         if refreshing { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         updatedLabel.stringValue =
-            refreshedAt.map { String(localized: "Updated \(QuotaText.age($0, now: now))") } ?? ""
+            refreshedAt.map { String(localized: "Checked \(QuotaText.age($0, now: now))") } ?? ""
 
         let scrollOrigin = scrollView.contentView.bounds.origin
         let previous = rows

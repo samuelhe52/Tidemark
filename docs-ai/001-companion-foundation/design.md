@@ -221,6 +221,15 @@ credentials. Live sources are an opt-in setting.
 - The Codex app-server (`account/rateLimits/read`) is not used: it can refresh
   tokens in `~/.codex/auth.json`.
 
+Live networking selects CC Switch's explicit `settings.global_proxy_url` read-only,
+then the process's scheme-specific / `ALL_PROXY` environment, then current macOS
+proxy settings. Claude receives equivalent HTTP proxy environment variables; Codex
+quota and managed OAuth renewal share a URLSession transport with explicit proxy
+failover disabled. Explicit bypasses remain direct. Invalid or unsupported proxy
+settings report a proxy issue instead of silently falling back to a direct request.
+System PAC is supported by native URLSession; PAC and SOCKS-only routes cannot be
+passed to Claude Code and report a proxy issue. See [008.004](../008-claude-usage-via-cli/004-proxy-routing.md).
+
 ### 3.2 The Claude statusline tap
 
 An addition to the user's `~/.claude/statusline-command.sh`, after `input=$(cat)`.
@@ -440,7 +449,7 @@ The menu's **Settings…** action, the dashboard's gear button, and Command-comm
 - Launch at login reflects ServiceManagement's actual main-app registration status, reports errors, and links to Login Items when approval is needed. Opening settings never registers a login item.
 - The optional global shortcut shows/hides the companion. The recorder requires Command, Control, or Option; Escape cancels and Delete clears. Recording suspends the previous shortcut, restores it on cancellation, and reports registration failures. No shortcut is assigned by default.
 - Hover/click dashboard opening, expansion delay, retraction delay, and Reset Position are available in Companion. Option-click or right-click on the orb pins, and VoiceOver exposes Pin/Unpin as a custom action; explicit shortcut dismissal stays hidden until the pointer leaves and reenters.
-- Live Usage remains off by default. Its menu and settings controls share one persisted value; the dashboard has no Live Usage control or footer, and shows the last refresh age in its header. Existing credential ownership and request gates are unchanged.
+- Live Usage remains off by default. Its menu and settings controls share one persisted value; the dashboard has no Live Usage control or footer, and shows the last check age in its header. Existing credential ownership and request gates are unchanged.
 - Account visibility is shared with inline dashboard hide/restore controls. Settings reorders accounts by dragging, with context-menu and accessibility move actions. The saved order applies globally, including interleaved providers; consecutive provider runs get separate headings with unique row identities. Unknown/new accounts append; temporarily absent accounts retain their saved slots.
 - Compact summary is chosen per service: Automatic (the visible account in use, else the first visible one), one visible account of that service, or Off. Choosing an account affects only its service. A missing explicit selection shows that service as unknown instead of substituting another account. Hiding the selected account resets that service to Automatic.
 - Remaining/used applies to labels, gauge progress, compact summary, tooltips, and accessibility descriptions. Reset countdown/clock applies to quota reset labels. Freshness rules remain fixed.

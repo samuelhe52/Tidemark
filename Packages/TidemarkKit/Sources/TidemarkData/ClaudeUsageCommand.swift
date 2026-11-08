@@ -16,6 +16,10 @@ public enum ClaudeUsageRun: Equatable, Sendable {
     case unavailable
     /// The command did not exit in time and was stopped.
     case timedOut
+    /// The process exited unsuccessfully; raw output is never retained.
+    case failed(exitCode: Int32)
+    /// The selected proxy cannot be used by Claude Code.
+    case proxyUnavailable
 }
 
 /// Asks Claude Code to refresh `cachedUsageUtilization` in `~/.claude.json`.
@@ -29,11 +33,13 @@ public protocol ClaudeUsageCommand: Sendable {
 /// Runs `claude -p /usage` in the default config directory, the way CC Switch does.
 struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     let home: URL
+    private let proxy: UsageProxy
     /// Where the login shell found `claude`, so the user's startup files run once, not on every run.
     private let shellFound = ShellAnswer()
 
-    init(home: URL) {
+    init(home: URL, proxy: UsageProxy? = nil) {
         self.home = home
+        self.proxy = proxy ?? UsageProxy(ccSwitchHome: home.appending(path: ".cc-switch"))
     }
 
     static let timeout: Duration = .seconds(45)
@@ -50,24 +56,30 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         let process = Process()
         process.executableURL = executable
         process.arguments = Self.arguments
-        process.environment = environment(for: executable)
+        do { process.environment = try environment(for: executable) } catch { return .proxyUnavailable }
         process.currentDirectoryURL = home
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return .unavailable }
-        return await Self.wait(for: process, timeout: Self.timeout) ? .finished : .timedOut
+        guard await Self.wait(for: process, timeout: Self.timeout) else { return .timedOut }
+        return process.terminationStatus == 0 ? .finished : .failed(exitCode: process.terminationStatus)
     }
 
     /// The environment for the run: the account comes from Claude Code's own sign-in only, and
     /// `/usage` must be allowed to reach the network.
-    private func environment(for executable: URL) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
+    func environment(for executable: URL) throws -> [String: String] {
+        var environment = try proxy.claudeEnvironment(proxy.environment())
+        for key in Array(environment.keys)
+        where key.hasPrefix("ANTHROPIC_") || key.hasPrefix("CLAUDE_CODE_USE_") {
+            environment[key] = nil
+        }
         for key in [
             "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
             // Inherited when Tidemark is started from a Claude Code session or a cloud setup.
-            "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"
+            "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_SECURESTORAGE_CONFIG_DIR"
         ] {
             environment[key] = nil
         }

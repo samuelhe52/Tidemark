@@ -26,7 +26,7 @@
   prefixes `PATH` with the executable's directory, its resolved directory, and the
   Homebrew and `/usr/local` bin directories.
 - New issue `QuotaReadIssue.cliUnavailable`. For Claude, `requestFailed` now reads
-  "Claude Code couldn't refresh usage. Open it to check the sign-in."
+  "Couldn't refresh usage. Check the network or proxy." (corrected by [004](004-proxy-routing.md)).
 - The Claude plan comes from `oauthAccount.organizationType` without its `claude_`
   prefix, and is attached to the passive cache reading as well.
 - Removed: `claudeCredential()`, the Claude branch of the usage request and parser

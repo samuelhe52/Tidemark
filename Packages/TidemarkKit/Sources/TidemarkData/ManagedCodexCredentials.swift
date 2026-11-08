@@ -110,7 +110,7 @@ actor ManagedCodexCredentials {
             let data: Data
             let response: HTTPURLResponse
             do { (data, response) = try await environment.transport.data(for: request) } catch {
-                throw ManagedCredentialError(issue: .requestFailed)
+                throw ManagedCredentialError(issue: error is UsageProxyError ? .proxyUnavailable : .requestFailed)
             }
 
             guard (200..<300).contains(response.statusCode) else {

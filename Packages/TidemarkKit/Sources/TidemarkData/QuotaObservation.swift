@@ -126,6 +126,8 @@ public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     case rateLimited
     /// Network error, server error, or an unreadable answer.
     case requestFailed
+    /// The selected proxy is invalid or cannot be used by this client.
+    case proxyUnavailable
     /// An account without a recorded reading while live queries are disabled.
     case notObserved
 }

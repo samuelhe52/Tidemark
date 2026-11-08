@@ -56,7 +56,8 @@ public struct UsageEnvironment: Sendable {
             home: home, codexHome: codexHome ?? home.appending(path: ".codex"),
             ccSwitchHome: home.appending(path: ".cc-switch"),
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
-            credentials: KeychainCredentialStore(), transport: URLSessionTransport.shared,
+            credentials: KeychainCredentialStore(),
+            transport: URLSessionTransport(proxy: UsageProxy(ccSwitchHome: home.appending(path: ".cc-switch"))),
             claudeUsage: ClaudeCLIUsageCommand(home: home), now: { Date() })
     }
 }
@@ -104,10 +105,14 @@ struct KeychainCredentialStore: CredentialStore {
 }
 
 final class URLSessionTransport: HTTPTransport {
-    static let shared = URLSessionTransport()
-    private let session: URLSession
+    private let proxy: UsageProxy
 
-    private init() {
+    init(proxy: UsageProxy) {
+        self.proxy = proxy
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        guard let url = request.url else { throw URLError(.badURL) }
         // No disk or memory cache and no cookies: answers are read once and dropped.
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
@@ -115,10 +120,9 @@ final class URLSessionTransport: HTTPTransport {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
-        session = URLSession(configuration: configuration)
-    }
-
-    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try UsageProxy.configure(configuration, route: proxy.route(for: url))
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         return (data, http)

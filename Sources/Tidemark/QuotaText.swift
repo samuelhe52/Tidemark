@@ -77,8 +77,10 @@ enum QuotaText {
         case .cliUnavailable: String(localized: "Claude Code wasn't found. Install it to see live usage.")
         case .requestFailed:
             service == .claude
-                ? String(localized: "Claude Code couldn't refresh usage. Open it to check the sign-in.")
+                ? String(localized: "Couldn't refresh usage. Check the network or proxy.")
                 : String(localized: "Couldn't reach the usage service")
+        case .proxyUnavailable:
+            String(localized: "Couldn't use the configured proxy. Check its address and proxy type.")
         case .notObserved: String(localized: "Not seen in use yet")
         }
     }

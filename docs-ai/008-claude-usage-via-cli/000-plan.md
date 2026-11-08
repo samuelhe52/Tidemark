@@ -19,11 +19,15 @@ not verified on this machine: Claude Code rewrites the item when it renews, and
 the rewrite drops the "Always Allow" grant Tidemark received, so the next read
 prompts again. Either way, every read of an item another tool owns can prompt.
 
-CC Switch (upstream `src-tauri/src/services/claude_account/usage.rs` at
-`e1f8acf`) never reads that item for usage. It runs
+CC Switch's CLI fallback (upstream
+`src-tauri/src/services/claude_account/usage.rs` at `e1f8acf`) runs
 `claude -p /usage --output-format json --tools "" --strict-mcp-config
 --setting-sources "" --no-session-persistence` in the account's config
-directory. Claude Code answers `/usage` itself, without a model turn, renews its
+directory. Correction verified on 2026-11-08: CC Switch's subscription service
+reads credentials and queries HTTP first; it uses this CLI path for expired
+credentials. The fallback supplies CC Switch's configured HTTP proxy. Tidemark's
+CLI-only approach is a local credential-ownership decision, not a copy of that
+complete query flow. Claude Code answers `/usage` itself, without a model turn, renews its
 token under its own lock if needed, and writes `cachedUsageUtilization` to
 `.claude.json`. CC Switch then reads that cache, accepting it only for the
 matching `accountUuid`, and runs the command at most once per account per ten
@@ -94,3 +98,4 @@ ordinary use in those days, so the passive cache alone is not a live source.
 ## Amendments
 - Updated 2026-11-07: the run is accepted only when the cache is under 60 s old at the end, and a young cache skips the run — see [002-cache-freshness.md](002-cache-freshness.md)
 - Updated 2026-11-08: the login-shell lookup is now cached as this plan intended, and the run is hardened — see [003-run-hardening.md](003-run-hardening.md)
+- Updated 2026-11-08: corrected the CC Switch comparison and added shared proxy routing and truthful refresh status — see [004-proxy-routing.md](004-proxy-routing.md)
