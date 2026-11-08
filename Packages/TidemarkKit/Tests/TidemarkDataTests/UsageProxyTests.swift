@@ -99,6 +99,32 @@ struct UsageProxyTests {
         }
     }
 
+    /// Claude Code cannot use SOCKS, so a SOCKS variable yields to the next source.
+    @Test func claudeSkipsSOCKSForTheNextSource() async throws {
+        let socks = ["ALL_PROXY": "socks5://127.0.0.1:7891", "NO_PROXY": "shell.local"]
+        let http = URL(string: "http://127.0.0.1:7890")!
+        var proxy = UsageProxy(
+            variables: { socks.merging(["https_proxy": "http://127.0.0.1:7890"]) { $1 } },
+            systemRoute: { _, _ in .direct }, systemExceptions: { ["system.local"] })
+        var env = try await proxy.claudeEnvironment([:])
+        #expect(env["HTTPS_PROXY"] == http.absoluteString)
+        #expect(env["NO_PROXY"] == "shell.local")
+        proxy.variables = { socks }
+        proxy.systemRoute = { _, _ in .proxy(http) }
+        env = try await proxy.claudeEnvironment([:])
+        #expect(env["HTTPS_PROXY"] == http.absoluteString)
+        #expect(env["NO_PROXY"] == "system.local")
+        proxy.systemRoute = { _, _ in .direct }
+        env = try await proxy.claudeEnvironment([:])
+        #expect(env["HTTPS_PROXY"] == nil)
+        #expect(env["ALL_PROXY"] == nil)
+        proxy.systemRoute = { _, _ in .proxy(URL(string: "socks5://127.0.0.1:7891")!) }
+        await #expect(throws: UsageProxyError.self) { try await proxy.claudeEnvironment([:]) }
+        proxy.variables = { ["ALL_PROXY": "not-a-url"] }
+        proxy.systemRoute = { _, _ in .proxy(http) }
+        await #expect(throws: UsageProxyError.self) { try await proxy.claudeEnvironment([:]) }
+    }
+
     @Test func invalidOrUnsupportedProxyNeverBecomesDirect() async throws {
         for value in ["not-a-url", "http://proxy:0", "http://proxy:65536", "ftp://proxy:80"] {
             let proxy = UsageProxy(variables: { ["HTTPS_PROXY": value, "NO_PROXY": "*"] })

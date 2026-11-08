@@ -74,25 +74,38 @@ struct UsageProxy: Sendable {
             result[key] = nil
             result[key.uppercased()] = nil
         }
+        var bypass = ""
         for scheme in ["http", "https"] {
-            let route = try route(
-                for: URL(string: "\(scheme)://api.anthropic.com")!, honorBypass: false, variables: env)
-            let value: String?
-            switch route {
-            case .direct: value = nil
-            case .proxy(let url):
-                guard ["http", "https"].contains(url.scheme) else { throw UsageProxyError.unavailable }
-                value = url.absoluteString
-            case .automatic: throw UsageProxyError.unavailable
-            }
-            result["\(scheme)_proxy"] = value
-            result["\(scheme.uppercased())_PROXY"] = value
+            let (proxy, schemeBypass) = try claudeProxy(scheme: scheme, variables: env)
+            result["\(scheme)_proxy"] = proxy?.absoluteString
+            result["\(scheme.uppercased())_PROXY"] = proxy?.absoluteString
+            // Claude Code's own traffic is HTTPS, so that route's source owns the bypass list.
+            if scheme == "https" { bypass = schemeBypass }
         }
-        let hasExplicitProxy = variable("https_proxy", in: env) != nil || variable("all_proxy", in: env) != nil
-        let bypass = hasExplicitProxy ? variable("no_proxy", in: env) ?? "" : systemExceptions().joined(separator: ",")
         result["NO_PROXY"] = bypass
         result["no_proxy"] = bypass
         return result
+    }
+
+    /// The HTTP(S) proxy Claude Code should use for `scheme` (nil for direct), with the bypass list
+    /// of the source it came from.
+    ///
+    /// Claude Code accepts only HTTP(S) proxies, so a SOCKS variable yields to the next source,
+    /// as a terminal's Claude Code would ignore it, instead of blocking the run. A malformed
+    /// variable still fails, and so does a system route Claude Code cannot follow: there is no
+    /// source left to try.
+    private func claudeProxy(scheme: String, variables env: [String: String]) throws -> (URL?, String) {
+        for key in ["\(scheme)_proxy", "all_proxy"] {
+            guard let value = variable(key, in: env) else { continue }
+            let url = try Self.proxyURL(value)
+            if ["http", "https"].contains(url.scheme) { return (url, variable("no_proxy", in: env) ?? "") }
+        }
+        let exceptions = systemExceptions().joined(separator: ",")
+        switch try systemRoute(URL(string: "\(scheme)://api.anthropic.com")!, false) {
+        case .direct: return (nil, exceptions)
+        case .proxy(let url) where ["http", "https"].contains(url.scheme): return (url, exceptions)
+        case .proxy, .automatic: throw UsageProxyError.unavailable
+        }
     }
 
     static func configure(_ configuration: URLSessionConfiguration, route: Route) throws {
