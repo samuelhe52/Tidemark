@@ -23,15 +23,17 @@ CC Switch's CLI fallback (upstream
 `src-tauri/src/services/claude_account/usage.rs` at `e1f8acf`) runs
 `claude -p /usage --output-format json --tools "" --strict-mcp-config
 --setting-sources "" --no-session-persistence` in the account's config
-directory. Correction verified on 2026-11-08: CC Switch's subscription service
-reads credentials and queries HTTP first; it uses this CLI path for expired
-credentials. The fallback supplies CC Switch's configured HTTP proxy. Tidemark's
-CLI-only approach is a local credential-ownership decision, not a copy of that
-complete query flow. Claude Code answers `/usage` itself, without a model turn, renews its
+directory. Claude Code answers `/usage` itself, without a model turn, renews its
 token under its own lock if needed, and writes `cachedUsageUtilization` to
 `.claude.json`. CC Switch then reads that cache, accepting it only for the
 matching `accountUuid`, and runs the command at most once per account per ten
 minutes, one at a time, with a 45 s timeout.
+
+(Corrected 2026-11-08 by [004](004-proxy-routing.md).) That CLI run is CC Switch's
+fallback, not its whole query flow: its subscription service reads credentials and
+queries HTTP first, and runs the CLI for expired credentials, passing CC Switch's
+configured HTTP proxy. Tidemark running only the CLI is its own credential-ownership
+decision.
 
 Checked on 2026-11-07 with Claude Code 2.1.319: that command exited 0 in about
 2 s with `total_cost_usd: 0`, and moved the cache's `fetchedAtMs` from 4.4 days
@@ -98,4 +100,4 @@ ordinary use in those days, so the passive cache alone is not a live source.
 ## Amendments
 - Updated 2026-11-07: the run is accepted only when the cache is under 60 s old at the end, and a young cache skips the run — see [002-cache-freshness.md](002-cache-freshness.md)
 - Updated 2026-11-08: the login-shell lookup is now cached as this plan intended, and the run is hardened — see [003-run-hardening.md](003-run-hardening.md)
-- Updated 2026-11-08: corrected the CC Switch comparison and added shared proxy routing and truthful refresh status — see [004-proxy-routing.md](004-proxy-routing.md)
+- Updated 2026-11-08: corrected the CC Switch comparison; live requests route through the user's shell or system proxy, and Claude Code error exits are reported apart — see [004-proxy-routing.md](004-proxy-routing.md)

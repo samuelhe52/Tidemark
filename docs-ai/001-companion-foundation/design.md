@@ -221,14 +221,15 @@ credentials. Live sources are an opt-in setting.
 - The Codex app-server (`account/rateLimits/read`) is not used: it can refresh
   tokens in `~/.codex/auth.json`.
 
-Live networking selects CC Switch's explicit `settings.global_proxy_url` read-only,
-then the process's scheme-specific / `ALL_PROXY` environment, then current macOS
-proxy settings. Claude receives equivalent HTTP proxy environment variables; Codex
-quota and managed OAuth renewal share a URLSession transport with explicit proxy
-failover disabled. Explicit bypasses remain direct. Invalid or unsupported proxy
-settings report a proxy issue instead of silently falling back to a direct request.
-System PAC is supported by native URLSession; PAC and SOCKS-only routes cannot be
-passed to Claude Code and report a proxy issue. See [008.004](../008-claude-usage-via-cli/004-proxy-routing.md).
+Live networking takes proxy variables (`<scheme>_proxy`, `ALL_PROXY`, `NO_PROXY`)
+from Tidemark's own environment when it names a proxy, otherwise from the user's
+interactive login shell (cached for five minutes), then falls back to the current
+macOS proxy settings. CC Switch's configuration is not read for routing. Codex quota
+and managed OAuth renewal share a URLSession transport with proxy failover disabled.
+Explicit bypasses go direct. A malformed proxy reports a proxy issue rather than
+going direct. Claude Code receives HTTP(S) proxy variables. It skips a SOCKS variable
+for the next source. A SOCKS-only or PAC system route reports a proxy issue. See
+[008.004](../008-claude-usage-via-cli/004-proxy-routing.md).
 
 ### 3.2 The Claude statusline tap
 
