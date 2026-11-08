@@ -8,11 +8,14 @@
 import CFNetwork
 import Foundation
 import Network
-import SQLite3
 
 /// A routing failure contains no proxy URL: URLs can contain passwords.
 enum UsageProxyError: Error { case unavailable }
 
+/// The proxy for live usage requests: the user's proxy variables first, then macOS proxy settings.
+///
+/// The variables are Tidemark's own when it was started with any (from a terminal), otherwise the
+/// ones the user's interactive login shell sets, so a Dock launch routes like a terminal does.
 struct UsageProxy: Sendable {
     enum Route: Equatable, Sendable {
         case direct
@@ -21,20 +24,36 @@ struct UsageProxy: Sendable {
         case automatic
     }
 
-    let ccSwitchHome: URL
-    var environment: @Sendable () -> [String: String] = { ProcessInfo.processInfo.environment }
+    /// The proxy variable names, lowercase; each is also read and written uppercase.
+    static let variableNames = ["http_proxy", "https_proxy", "all_proxy", "no_proxy"]
+
+    /// Proxy variables only, read on every operation, including renewals.
+    var variables: @Sendable () async -> [String: String]
     var systemRoute: @Sendable (URL, Bool) throws -> Route = UsageProxy.systemRoute
     var systemExceptions: @Sendable () -> [String] = UsageProxy.systemExceptions
 
-    /// Read on every operation, including renewals.
-    ///
-    /// No cached session pins an old network route.
-    func route(for target: URL, honorBypass: Bool = true) throws -> Route {
-        let env = environment()
-        let configured = try ccSwitchProxy()
-        let explicit =
-            configured ?? variable("\(target.scheme ?? "https")_proxy", in: env)
-            ?? variable("all_proxy", in: env)
+    static func live(home: URL) -> UsageProxy {
+        let shell = ShellProxyVariables(home: home)
+        return UsageProxy(variables: {
+            let own = proxyVariables(in: ProcessInfo.processInfo.environment)
+            return own.isEmpty ? await shell.current() : own
+        })
+    }
+
+    /// The proxy variables in `environment`, or none when it names no proxy: a lone `NO_PROXY`
+    /// does not hide the shell's proxies.
+    static func proxyVariables(in environment: [String: String]) -> [String: String] {
+        let keys = variableNames.flatMap { [$0, $0.uppercased()] }
+        let found = environment.filter { keys.contains($0.key) && !$0.value.isEmpty }
+        return found.keys.contains(where: { !$0.lowercased().hasPrefix("no_") }) ? found : [:]
+    }
+
+    func route(for target: URL) async throws -> Route {
+        try route(for: target, honorBypass: true, variables: await variables())
+    }
+
+    func route(for target: URL, honorBypass: Bool, variables env: [String: String]) throws -> Route {
+        let explicit = variable("\(target.scheme ?? "https")_proxy", in: env) ?? variable("all_proxy", in: env)
         if let explicit {
             // Validate before applying bypasses: a broken setting must never become direct traffic.
             let proxy = try Self.proxyURL(explicit)
@@ -46,12 +65,18 @@ struct UsageProxy: Sendable {
 
     /// Resolve each scheme, then set both cases: Node and native clients differ in case precedence.
     ///
-    /// ALL_PROXY is removed so an explicit direct route cannot fall back to an inherited SOCKS proxy.
-    func claudeEnvironment(_ original: [String: String]) throws -> [String: String] {
+    /// Inherited proxy variables are replaced, so an explicit direct route cannot fall back to an
+    /// inherited SOCKS proxy.
+    func claudeEnvironment(_ original: [String: String]) async throws -> [String: String] {
+        let env = await variables()
         var result = original
-        for key in ["ALL_PROXY", "all_proxy"] { result[key] = nil }
+        for key in Self.variableNames {
+            result[key] = nil
+            result[key.uppercased()] = nil
+        }
         for scheme in ["http", "https"] {
-            let route = try route(for: URL(string: "\(scheme)://api.anthropic.com")!, honorBypass: false)
+            let route = try route(
+                for: URL(string: "\(scheme)://api.anthropic.com")!, honorBypass: false, variables: env)
             let value: String?
             switch route {
             case .direct: value = nil
@@ -63,10 +88,7 @@ struct UsageProxy: Sendable {
             result["\(scheme)_proxy"] = value
             result["\(scheme.uppercased())_PROXY"] = value
         }
-        let env = environment()
-        let hasExplicitProxy =
-            try ccSwitchProxy() != nil || variable("https_proxy", in: env) != nil
-            || variable("all_proxy", in: env) != nil
+        let hasExplicitProxy = variable("https_proxy", in: env) != nil || variable("all_proxy", in: env) != nil
         let bypass = hasExplicitProxy ? variable("no_proxy", in: env) ?? "" : systemExceptions().joined(separator: ",")
         result["NO_PROXY"] = bypass
         result["no_proxy"] = bypass
@@ -142,32 +164,6 @@ struct UsageProxy: Sendable {
         }
     }
 
-    private func ccSwitchProxy() throws -> String? {
-        let file = ccSwitchHome.appending(path: "cc-switch.db")
-        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-        var database: OpaquePointer?
-        guard sqlite3_open_v2(file.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
-            if let database { sqlite3_close(database) }
-            throw UsageProxyError.unavailable
-        }
-        defer { sqlite3_close(database) }
-        sqlite3_busy_timeout(database, 1000)
-        var statement: OpaquePointer?
-        guard
-            sqlite3_prepare_v2(
-                database, "SELECT value FROM settings WHERE key = 'global_proxy_url'", -1, &statement, nil) == SQLITE_OK
-        else { throw UsageProxyError.unavailable }
-        defer { sqlite3_finalize(statement) }
-        switch sqlite3_step(statement) {
-        case SQLITE_DONE: return nil
-        case SQLITE_ROW:
-            guard let value = sqlite3_column_text(statement, 0) else { return nil }
-            let text = String(cString: value).trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : text
-        default: throw UsageProxyError.unavailable
-        }
-    }
-
     static func systemRoute(for target: URL, honorBypass: Bool) throws -> Route {
         guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() else {
             throw UsageProxyError.unavailable
@@ -215,5 +211,77 @@ struct UsageProxy: Sendable {
             return []
         }
         return settings[kCFNetworkProxiesExceptionsList as String] as? [String] ?? []
+    }
+}
+
+/// The proxy variables the user's interactive login shell sets, read at most every five minutes.
+///
+/// A GUI app inherits none of them. A shell that fails or does not finish in time gives none,
+/// and the system settings apply.
+actor ShellProxyVariables {
+    static let maximumAge: Duration = .seconds(300)
+
+    private let home: URL
+    private let shell: String
+    private var cached: (at: ContinuousClock.Instant, variables: [String: String])?
+    private var reading: Task<[String: String], Never>?
+
+    init(home: URL, shell: String? = nil) {
+        self.home = home
+        self.shell = shell ?? ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
+    }
+
+    func current() async -> [String: String] {
+        let clock = ContinuousClock()
+        if let cached, clock.now - cached.at < Self.maximumAge { return cached.variables }
+        // Concurrent requests share one shell run.
+        if let reading { return await reading.value }
+        let task = Task { [home, shell] in await Self.read(shell: shell, home: home) }
+        reading = task
+        let variables = await task.value
+        cached = (clock.now, variables)
+        reading = nil
+        return variables
+    }
+
+    private static func read(shell: String, home: URL) async -> [String: String] {
+        // The answer goes to a file, so nothing the startup files print can mix with it. The file
+        // holds the whole environment briefly, so only this user can read it.
+        let answer = FileManager.default.temporaryDirectory.appending(path: "tidemark-env-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: answer.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        else { return [:] }
+        defer { try? FileManager.default.removeItem(at: answer) }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shell)
+        // Interactive, so variables set in `.zshrc` count.
+        process.arguments = ["-l", "-i", "-c", #"/usr/bin/env -0 > "$TIDEMARK_ANSWER""#]
+        // Only what the startup files set counts.
+        var environment = ProcessInfo.processInfo.environment
+        for key in UsageProxy.variableNames {
+            environment[key] = nil
+            environment[key.uppercased()] = nil
+        }
+        environment["TIDEMARK_ANSWER"] = answer.path
+        process.environment = environment
+        process.currentDirectoryURL = home
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil,
+            await ClaudeCLIUsageCommand.wait(for: process, timeout: ClaudeCLIUsageCommand.lookupTimeout),
+            let data = try? LocalSources.bounded(answer, maximumBytes: 1024 * 1024)
+        else { return [:] }
+        return UsageProxy.proxyVariables(in: parse(data))
+    }
+
+    /// `env -0` output: NUL-terminated `NAME=value` entries; values may contain newlines.
+    static func parse(_ data: Data) -> [String: String] {
+        var result: [String: String] = [:]
+        for entry in data.split(separator: 0) {
+            let text = String(decoding: entry, as: UTF8.self)
+            guard let equals = text.firstIndex(of: "="), equals != text.startIndex else { continue }
+            result[String(text[..<equals])] = String(text[text.index(after: equals)...])
+        }
+        return result
     }
 }

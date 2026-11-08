@@ -37,9 +37,9 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     /// Where the login shell found `claude`, so the user's startup files run once, not on every run.
     private let shellFound = ShellAnswer()
 
-    init(home: URL, proxy: UsageProxy? = nil) {
+    init(home: URL, proxy: UsageProxy) {
         self.home = home
-        self.proxy = proxy ?? UsageProxy(ccSwitchHome: home.appending(path: ".cc-switch"))
+        self.proxy = proxy
     }
 
     static let timeout: Duration = .seconds(45)
@@ -56,7 +56,7 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         let process = Process()
         process.executableURL = executable
         process.arguments = Self.arguments
-        do { process.environment = try environment(for: executable) } catch { return .proxyUnavailable }
+        do { process.environment = try await environment(for: executable) } catch { return .proxyUnavailable }
         process.currentDirectoryURL = home
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
@@ -68,8 +68,8 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
 
     /// The environment for the run: the account comes from Claude Code's own sign-in only, and
     /// `/usage` must be allowed to reach the network.
-    func environment(for executable: URL) throws -> [String: String] {
-        var environment = try proxy.claudeEnvironment(proxy.environment())
+    func environment(for executable: URL) async throws -> [String: String] {
+        var environment = try await proxy.claudeEnvironment(ProcessInfo.processInfo.environment)
         for key in Array(environment.keys)
         where key.hasPrefix("ANTHROPIC_") || key.hasPrefix("CLAUDE_CODE_USE_") {
             environment[key] = nil
@@ -144,7 +144,7 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
 
     /// Whether the process exited within `timeout`; otherwise it is terminated, then killed. A
     /// cancelled task terminates it at once rather than spinning, since its sleeps no longer wait.
-    private static func wait(for process: Process, timeout: Duration) async -> Bool {
+    static func wait(for process: Process, timeout: Duration) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
         while process.isRunning {

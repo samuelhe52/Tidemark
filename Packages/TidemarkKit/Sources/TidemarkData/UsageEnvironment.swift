@@ -52,13 +52,15 @@ public struct UsageEnvironment: Sendable {
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].nonEmpty.map {
             URL(fileURLWithPath: $0, isDirectory: true)
         }
+        // One proxy, so the login shell is read once for every request.
+        let proxy = UsageProxy.live(home: home)
         return UsageEnvironment(
             home: home, codexHome: codexHome ?? home.appending(path: ".codex"),
             ccSwitchHome: home.appending(path: ".cc-switch"),
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
             credentials: KeychainCredentialStore(),
-            transport: URLSessionTransport(proxy: UsageProxy(ccSwitchHome: home.appending(path: ".cc-switch"))),
-            claudeUsage: ClaudeCLIUsageCommand(home: home), now: { Date() })
+            transport: URLSessionTransport(proxy: proxy), claudeUsage: ClaudeCLIUsageCommand(home: home, proxy: proxy),
+            now: { Date() })
     }
 }
 
@@ -120,7 +122,7 @@ final class URLSessionTransport: HTTPTransport {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
-        try UsageProxy.configure(configuration, route: proxy.route(for: url))
+        try UsageProxy.configure(configuration, route: await proxy.route(for: url))
         let session = URLSession(configuration: configuration)
         defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
