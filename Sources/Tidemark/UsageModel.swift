@@ -28,13 +28,18 @@ final class UsageModel {
     private let historyReader: UsageHistoryReader
     private let usageLoad = SingleFlight()
     private let historyLoad = SingleFlight()
+    private let proxyOverride: ProxyOverride
     private var appliedLiveEnabled: Bool
+    private var appliedProxyAddress: String
     private var lastRefresh = Date.distantPast
     private var timer: Timer?
 
-    init(settings: SettingsStore, environment: UsageEnvironment = .current) {
+    init(settings: SettingsStore) {
         self.settings = settings
         appliedLiveEnabled = settings.liveUsageEnabled
+        appliedProxyAddress = settings.proxyAddress
+        proxyOverride = ProxyOverride(settings.proxyAddress)
+        let environment = UsageEnvironment.current(proxyOverride: proxyOverride)
         service = UsageService(environment: environment, liveEnabled: settings.liveUsageEnabled)
         historyReader = UsageHistoryReader(environment: environment)
         history = DashboardView.History(range: settings.historyRange, view: settings.historyView)
@@ -75,8 +80,15 @@ final class UsageModel {
         if Date().timeIntervalSince(lastRefresh) >= 5 { refresh(userInitiated: false) }
     }
 
-    /// Follows the Live Usage setting; turning it on or off refreshes at once.
+    /// Follows the Live Usage and proxy settings; changing either refreshes at once.
     func settingsChanged() {
+        let proxy = settings.proxyAddress
+        if proxy != appliedProxyAddress {
+            appliedProxyAddress = proxy
+            proxyOverride.address = proxy
+            // Only live requests use the proxy. A Live Usage change refreshes below.
+            if settings.liveUsageEnabled && appliedLiveEnabled { refresh(userInitiated: true) }
+        }
         guard appliedLiveEnabled != settings.liveUsageEnabled else { return }
         let enabled = settings.liveUsageEnabled
         appliedLiveEnabled = enabled

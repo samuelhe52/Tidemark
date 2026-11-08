@@ -22,6 +22,10 @@ final class SettingsStore {
     var liveUsageEnabled: Bool {
         didSet { save(liveUsageEnabled, DefaultsKey.liveUsageEnabled) }
     }
+    /// A valid proxy for live usage requests, or empty to use the shell's and the system's.
+    var proxyAddress: String {
+        didSet { save(proxyAddress, DefaultsKey.proxyAddress) }
+    }
     var hoverToExpand: Bool {
         didSet { save(hoverToExpand, DefaultsKey.hoverToExpand) }
     }
@@ -86,6 +90,8 @@ final class SettingsStore {
             storedHidden: defaults.stringArray(forKey: DefaultsKey.requestLogHiddenColumns))
         liveUsageEnabled = defaults.bool(forKey: DefaultsKey.liveUsageEnabled)
         shortClaudeModelNames = defaults.bool(forKey: DefaultsKey.shortClaudeModelNames)
+        let proxy = defaults.string(forKey: DefaultsKey.proxyAddress)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        proxyAddress = proxy.flatMap { ProxyOverride.isValid($0) ? $0 : nil } ?? ""
         hoverToExpand = defaults.object(forKey: DefaultsKey.hoverToExpand) as? Bool ?? true
         let normalized = CompanionBehavior(
             expansionDelay: defaults.object(forKey: DefaultsKey.expansionDelay) as? Double ?? 0.6,

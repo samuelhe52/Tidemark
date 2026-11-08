@@ -8,14 +8,44 @@
 import CFNetwork
 import Foundation
 import Network
+import os
 
 /// A routing failure contains no proxy URL: URLs can contain passwords.
 enum UsageProxyError: Error { case unavailable }
 
-/// The proxy for live usage requests: the user's proxy variables first, then macOS proxy settings.
+/// The proxy address the user entered in settings, shared with the running requests.
+///
+/// Nil or empty means no explicit proxy. Held in memory only; the app saves the text itself.
+public final class ProxyOverride: Sendable {
+    private let stored: OSAllocatedUnfairLock<String?>
+
+    public init(_ address: String? = nil) {
+        stored = OSAllocatedUnfairLock(initialState: Self.trimmed(address))
+    }
+
+    public var address: String? {
+        get { stored.withLock { $0 } }
+        set { stored.withLock { $0 = Self.trimmed(newValue) } }
+    }
+
+    /// True for an address the settings field may keep: an HTTP(S) or SOCKS5 proxy without
+    /// credentials, so no proxy password is saved in the clear.
+    public static func isValid(_ address: String) -> Bool {
+        (try? UsageProxy.explicitProxyURL(address)) != nil
+    }
+
+    private static func trimmed(_ address: String?) -> String? {
+        let text = address?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text?.isEmpty == false ? text : nil
+    }
+}
+
+/// The proxy for live usage requests: the one set in Tidemark's settings, then the user's proxy
+/// variables, then macOS proxy settings.
 ///
 /// The variables are Tidemark's own when it was started with any (from a terminal), otherwise the
 /// ones the user's interactive login shell sets, so a Dock launch routes like a terminal does.
+/// The settings proxy sends every request through it, with no bypass list.
 struct UsageProxy: Sendable {
     enum Route: Equatable, Sendable {
         case direct
@@ -31,13 +61,17 @@ struct UsageProxy: Sendable {
     var variables: @Sendable () async -> [String: String]
     var systemRoute: @Sendable (URL, Bool) throws -> Route = UsageProxy.systemRoute
     var systemExceptions: @Sendable () -> [String] = UsageProxy.systemExceptions
+    /// The settings proxy, read on every operation.
+    var override: @Sendable () -> String? = { nil }
 
-    static func live(home: URL) -> UsageProxy {
+    static func live(home: URL, override: ProxyOverride) -> UsageProxy {
         let shell = ShellProxyVariables(home: home)
-        return UsageProxy(variables: {
-            let own = proxyVariables(in: ProcessInfo.processInfo.environment)
-            return own.isEmpty ? await shell.current() : own
-        })
+        return UsageProxy(
+            variables: {
+                let own = proxyVariables(in: ProcessInfo.processInfo.environment)
+                return own.isEmpty ? await shell.current() : own
+            },
+            override: { override.address })
     }
 
     /// The proxy variables in `environment`, or none when it names no proxy: a lone `NO_PROXY`
@@ -49,7 +83,8 @@ struct UsageProxy: Sendable {
     }
 
     func route(for target: URL) async throws -> Route {
-        try route(for: target, honorBypass: true, variables: await variables())
+        if let address = override() { return .proxy(try Self.explicitProxyURL(address)) }
+        return try route(for: target, honorBypass: true, variables: await variables())
     }
 
     func route(for target: URL, honorBypass: Bool, variables env: [String: String]) throws -> Route {
@@ -68,12 +103,25 @@ struct UsageProxy: Sendable {
     /// Inherited proxy variables are replaced, so an explicit direct route cannot fall back to an
     /// inherited SOCKS proxy.
     func claudeEnvironment(_ original: [String: String]) async throws -> [String: String] {
-        let env = await variables()
         var result = original
         for key in Self.variableNames {
             result[key] = nil
             result[key.uppercased()] = nil
         }
+        if let address = override() {
+            // The user chose this proxy, so one Claude Code cannot use is an error, not a reason
+            // to try another source.
+            let url = try Self.explicitProxyURL(address)
+            guard ["http", "https"].contains(url.scheme) else { throw UsageProxyError.unavailable }
+            for key in ["http_proxy", "https_proxy"] {
+                result[key] = url.absoluteString
+                result[key.uppercased()] = url.absoluteString
+            }
+            result["NO_PROXY"] = ""
+            result["no_proxy"] = ""
+            return result
+        }
+        let env = await variables()
         var bypass = ""
         for scheme in ["http", "https"] {
             let (proxy, schemeBypass) = try claudeProxy(scheme: scheme, variables: env)
@@ -134,6 +182,13 @@ struct UsageProxy: Sendable {
             }
             configuration.proxyConfigurations = [proxy]
         }
+    }
+
+    /// The settings proxy as a URL; a malformed one, or one with credentials, fails.
+    static func explicitProxyURL(_ value: String) throws -> URL {
+        let url = try proxyURL(value)
+        guard url.user == nil, url.password == nil else { throw UsageProxyError.unavailable }
+        return url
     }
 
     static func proxyURL(_ value: String) throws -> URL {

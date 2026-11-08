@@ -10,6 +10,7 @@ import Foundation
 /// Every UserDefaults key Tidemark writes. Renaming one drops the user's saved value.
 enum DefaultsKey {
     static let liveUsageEnabled = "liveUsageEnabled"
+    static let proxyAddress = "proxyAddress"
     static let hoverToExpand = "hoverToExpand"
     static let expansionDelay = "expansionDelay"
     static let retractionDelay = "retractionDelay"

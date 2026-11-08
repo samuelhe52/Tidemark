@@ -125,6 +125,45 @@ struct UsageProxyTests {
         await #expect(throws: UsageProxyError.self) { try await proxy.claudeEnvironment([:]) }
     }
 
+    /// The settings proxy beats every other source and every bypass list.
+    @Test func settingsProxyWinsAndRoutesEverything() async throws {
+        let setting = ProxyOverride(" http://settings:9000 ")
+        #expect(setting.address == "http://settings:9000")
+        let proxy = UsageProxy(
+            variables: { ["HTTPS_PROXY": "http://shell:8001", "NO_PROXY": "*"] },
+            systemRoute: { _, _ in .direct }, override: { setting.address })
+        for target in [quota, renewal] {
+            #expect(try await proxy.route(for: target) == .proxy(URL(string: "http://settings:9000")!))
+        }
+        let env = try await proxy.claudeEnvironment(["ALL_PROXY": "socks5://inherited:1", "NO_PROXY": "x"])
+        #expect(env["HTTPS_PROXY"] == "http://settings:9000")
+        #expect(env["http_proxy"] == "http://settings:9000")
+        #expect(env["ALL_PROXY"] == nil)
+        #expect(env["NO_PROXY"] == "")
+        // Cleared, the other sources apply again.
+        setting.address = "  "
+        #expect(setting.address == nil)
+        #expect(try await proxy.route(for: quota) == .direct)
+    }
+
+    @Test func settingsProxyIsNeverReplacedByAnotherSource() async throws {
+        let fallback = UsageProxy(
+            variables: { ["HTTPS_PROXY": "http://shell:8001"] },
+            systemRoute: { _, _ in .proxy(URL(string: "http://system:8003")!) },
+            override: { "socks5://127.0.0.1:1080" })
+        // Codex requests can use SOCKS; Claude Code cannot, and must not fall through.
+        #expect(try await fallback.route(for: quota) == .proxy(URL(string: "socks5://127.0.0.1:1080")!))
+        await #expect(throws: UsageProxyError.self) { try await fallback.claudeEnvironment([:]) }
+        for value in ["not-a-url", "http://user:secret@proxy:80", "http://proxy:0"] {
+            let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct }, override: { value })
+            await #expect(throws: UsageProxyError.self) { try await proxy.route(for: quota) }
+            await #expect(throws: UsageProxyError.self) { try await proxy.claudeEnvironment([:]) }
+        }
+        #expect(ProxyOverride.isValid("socks5://127.0.0.1:1080"))
+        #expect(ProxyOverride.isValid("127.0.0.1:7890") == false)
+        #expect(ProxyOverride.isValid("http://user@proxy:80") == false)
+    }
+
     @Test func invalidOrUnsupportedProxyNeverBecomesDirect() async throws {
         for value in ["not-a-url", "http://proxy:0", "http://proxy:65536", "ftp://proxy:80"] {
             let proxy = UsageProxy(variables: { ["HTTPS_PROXY": value, "NO_PROXY": "*"] })

@@ -47,13 +47,16 @@ public struct UsageEnvironment: Sendable {
 
     /// The real paths (honoring `$CODEX_HOME`), the login Keychain, an uncached URL session, and
     /// the installed `claude`.
-    public static var current: UsageEnvironment {
+    public static var current: UsageEnvironment { current(proxyOverride: ProxyOverride()) }
+
+    /// Like `current`, routing through the settings proxy in `proxyOverride` when it has one.
+    public static func current(proxyOverride: ProxyOverride) -> UsageEnvironment {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].nonEmpty.map {
             URL(fileURLWithPath: $0, isDirectory: true)
         }
         // One proxy, so the login shell is read once for every request.
-        let proxy = UsageProxy.live(home: home)
+        let proxy = UsageProxy.live(home: home, override: proxyOverride)
         return UsageEnvironment(
             home: home, codexHome: codexHome ?? home.appending(path: ".codex"),
             ccSwitchHome: home.appending(path: ".cc-switch"),

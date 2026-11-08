@@ -153,12 +153,21 @@ struct UsageSettingsView: View {
     @Bindable var settings: SettingsStore
 
     var body: some View {
-        SettingsPane(height: 390) {
+        SettingsPane(height: 480) {
             Section {
                 Toggle("Live usage", isOn: $settings.liveUsageEnabled)
             } footer: {
                 Text(
                     "Fetch current quotas using existing sign-ins. For Claude, Tidemark runs Claude Code in the background every few minutes. Managed CC Switch Codex sign-ins may be renewed and saved. When off, Tidemark uses local readings."
+                )
+            }
+            Section {
+                ProxyAddressField(address: $settings.proxyAddress)
+            } header: {
+                Text("Network")
+            } footer: {
+                Text(
+                    "Send live usage requests through this proxy: http://, https:// or socks5://, host and port. Claude Code cannot use SOCKS. Leave empty to use your shell's proxy variables, then the system proxy."
                 )
             }
             Section("Display") {
@@ -182,6 +191,55 @@ struct UsageSettingsView: View {
                     Text("Remove the ‘Claude’ prefix from model display names in Usage and Request Logs.")
                 }
             }
+        }
+    }
+}
+
+/// Keeps a draft while typing and saves valid edits on Return, focus loss, or closing Settings.
+fileprivate struct ProxyAddressField: View {
+    @Binding var address: String
+    @State private var draft: String
+    @FocusState private var focused: Bool
+
+    init(address: Binding<String>) {
+        _address = address
+        _draft = State(initialValue: address.wrappedValue)
+    }
+
+    private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isInvalid: Bool { !trimmed.isEmpty && !ProxyOverride.isValid(trimmed) }
+
+    var body: some View {
+        LabeledContent("Proxy") {
+            TextField("Proxy", text: $draft, prompt: Text(verbatim: "http://127.0.0.1:7890"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                .frame(width: 240)
+                .focused($focused)
+                .onSubmit(commit)
+                .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+                    guard let window = notification.object as? NSWindow,
+                        window.identifier == SettingsWindowController.windowIdentifier
+                    else { return }
+                    // A retained window can close without clearing SwiftUI focus.
+                    commit()
+                }
+        }
+        if isInvalid && !focused {
+            Text(
+                "Enter a proxy such as http://127.0.0.1:7890. Addresses with a user name or password are not supported."
+            )
+            .foregroundStyle(.red)
+            .font(.callout)
+        }
+    }
+
+    private func commit() {
+        if trimmed.isEmpty || !isInvalid {
+            draft = trimmed
+            if address != trimmed { address = trimmed }
         }
     }
 }
@@ -439,6 +497,8 @@ final class ShortcutRecorderButton: NSButton {
 }
 
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    fileprivate static let windowIdentifier = NSUserInterfaceItemIdentifier("SettingsWindow")
+
     private let shortcut: GlobalShortcut
     private let login: LoginItemSettings
 
@@ -470,6 +530,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             tabs.addTabViewItem(item)
         }
         let window = NSWindow(contentViewController: tabs)
+        window.identifier = Self.windowIdentifier
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.toolbarStyle = .preference
         window.isReleasedWhenClosed = false
