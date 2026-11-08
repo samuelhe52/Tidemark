@@ -28,9 +28,10 @@ Decisions:
 | The address reaches `TidemarkData` through `ProxyOverride`, a lock-protected box read on every request | The data target imports no settings or UI. Requests are already built per call, so a change applies to the next one. `UsageModel` refreshes at once when it changes and Live Usage is on. |
 
 ## Current state
-Implemented, uncommitted. `UsageSettingsView` and `ProxyAddressField` in `SettingsView.swift` hold the
-UI. `SettingsStore.proxyAddress` saves under `DefaultsKey.proxyAddress` and drops a saved
-value that is no longer valid at launch.
+Implemented and shipped in 0.1.4 (2026-11-09; tag `v0.1.4` at `6ae309e`). The code is in
+`6ae0aba`, and this record is in `fba5ace`. `UsageSettingsView` and `ProxyAddressField` in
+`SettingsView.swift` hold the UI. `SettingsStore.proxyAddress` saves under
+`DefaultsKey.proxyAddress` and drops a saved value that is no longer valid at launch.
 
 ## Validation
 Run by Claude Code on 2026-11-09: `make test` passed (65 Data tests, 8 Engine tests), and
@@ -39,9 +40,10 @@ both vendor hosts; the Claude environment replacing inherited variables; SOCKS f
 Claude only; malformed, port 0 and credential addresses failing for both; clearing the
 address restoring the other sources.
 
-Not run: the settings pane itself. The pane height (480) was chosen without seeing it, and
-the Return, focus-loss, and immediate-refresh behavior and an end-to-end request through a
-real proxy have not been seen in the running app.
+Settings pane: the maintainer reviewed it in the running app and approved it before the
+release. Claude Code did not run the app, so the pane's layout (480 pt height), Return and
+focus-loss saving, the immediate refresh, and an end-to-end request through a real proxy
+are not verified by Claude Code.
 
 ## Refs
 - `Packages/TidemarkKit/Sources/TidemarkData/UsageProxy.swift`
