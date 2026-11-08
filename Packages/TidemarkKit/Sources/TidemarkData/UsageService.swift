@@ -272,7 +272,8 @@ public actor UsageService {
         let outcome: LiveOutcome
         switch run {
         case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
-        case .timedOut, .failed: outcome = fail(.requestFailed, key: accountID, now: environment.now()).0
+        case .timedOut: outcome = fail(.requestFailed, key: accountID, now: environment.now()).0
+        case .failed: outcome = fail(.cliFailed, key: accountID, now: environment.now()).0
         case .proxyUnavailable: outcome = fail(.proxyUnavailable, key: accountID, now: environment.now()).0
         case .finished:
             // Judged when the run ends. A cache Claude Code did not rewrite still counts if it is current.

@@ -111,6 +111,14 @@ struct LiveUsageTests {
         #expect(account?.issue == .cliUnavailable)
     }
 
+    @Test func claudeCodeErrorExitIsReportedApartFromNetworkFailure() async throws {
+        let fixture = try Fixture()
+        try fixture.write(Fixture.claudeState(account: "A", fetchedAt: now - 86400, used: 10), to: ".claude.json")
+        fixture.claudeUsage.respond = { .failed(exitCode: 1) }
+        let account = await fixture.service(live: true, now: now).refresh(userInitiated: true).first?.accounts.first
+        #expect(account?.issue == .cliFailed)
+    }
+
     @Test func activeCodexAccountIsLiveAndOthersComeFromTheStore() async throws {
         let fixture = try Fixture()
         try fixture.write(Fixture.codexAuth(token: Fixture.jwt(expiry: now + 3600)), to: ".codex/auth.json")

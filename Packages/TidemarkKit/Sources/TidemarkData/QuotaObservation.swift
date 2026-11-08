@@ -122,6 +122,9 @@ public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     case accessDenied
     /// Live Claude usage needs Claude Code, and no `claude` executable was found.
     case cliUnavailable
+    /// Claude Code exited with an error, so it could not answer `/usage` (not a sign-in problem:
+    /// signed out, it exits normally).
+    case cliFailed
     /// The service answered 429, or Tidemark is backing off after it.
     case rateLimited
     /// Network error, server error, or an unreadable answer.

@@ -75,6 +75,7 @@ enum QuotaText {
         case .accessDenied: String(localized: "Access was denied")
         case .rateLimited: String(localized: "Rate limited. Tidemark will retry later.")
         case .cliUnavailable: String(localized: "Claude Code wasn't found. Install it to see live usage.")
+        case .cliFailed: String(localized: "Claude Code exited with an error. Check that it runs in Terminal.")
         case .requestFailed:
             service == .claude
                 ? String(localized: "Couldn't refresh usage. Check the network or proxy.")
