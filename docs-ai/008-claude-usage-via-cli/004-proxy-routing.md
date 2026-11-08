@@ -27,6 +27,9 @@ The work landed in four commits:
 | `88584c7` | Claude Code skips a SOCKS proxy it cannot use. |
 | `21433a3` | A Claude Code error exit is its own issue, `cliFailed`. |
 
+(Extended 2026-11-09 by [005](005-proxy-setting.md): a proxy set in Tidemark's settings is tried before
+the sources below.)
+
 Current routing, by source and in this order:
 
 1. **Tidemark's own environment**, when it names a proxy (`http_proxy`, `https_proxy` or

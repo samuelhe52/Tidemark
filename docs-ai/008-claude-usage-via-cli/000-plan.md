@@ -101,3 +101,4 @@ ordinary use in those days, so the passive cache alone is not a live source.
 - Updated 2026-11-07: the run is accepted only when the cache is under 60 s old at the end, and a young cache skips the run — see [002-cache-freshness.md](002-cache-freshness.md)
 - Updated 2026-11-08: the login-shell lookup is now cached as this plan intended, and the run is hardened — see [003-run-hardening.md](003-run-hardening.md)
 - Updated 2026-11-08: corrected the CC Switch comparison; live requests route through the user's shell or system proxy, and Claude Code error exits are reported apart — see [004-proxy-routing.md](004-proxy-routing.md)
+- Updated 2026-11-09: a Proxy field in settings is the first routing source — see [005-proxy-setting.md](005-proxy-setting.md)
