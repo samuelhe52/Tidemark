@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Synchronization
 
 /// How a request to the Antigravity CLI (`agy`) for quota ended.
 public enum AgyUsageRun: Equatable, Sendable {
@@ -27,9 +26,8 @@ public enum AgyUsageRun: Equatable, Sendable {
 /// `agy` answers `/usage` itself, without a model turn or saved conversation, and owns its
 /// own credentials and token renewal. Tidemark never reads Google or Antigravity credentials.
 public protocol AgyUsageCommand: Sendable {
-    /// True when `agy` exists at a known install path, a cached shell path, or—when
-    /// `allowShellLookup` is true—on the user's login shell `PATH`. A shell miss is cached
-    /// until `retryMiss` is true so periodic refreshes do not repeatedly spawn a login shell.
+    /// Whether `agy` can be found. The login shell is asked only with `allowShellLookup`, and a
+    /// miss is kept until `retryMiss`, so refreshes do not repeatedly start a shell.
     func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool
     func run() async -> AgyUsageRun
 }
@@ -38,23 +36,16 @@ public protocol AgyUsageCommand: Sendable {
 struct AgyCLIUsageCommand: AgyUsageCommand {
     let home: URL
     private let proxy: UsageProxy
-    private let shell: String?
-    private let systemPaths: [String]
-    /// Where the login shell looked for `agy`, so the user's startup files do not run on every tick.
-    private let shellCache = AgyShellAnswer()
+    private let locator: CLILocator
 
-    init(
-        home: URL, proxy: UsageProxy, shell: String? = nil,
-        systemPaths: [String] = ["/opt/homebrew/bin/agy", "/usr/local/bin/agy"]
-    ) {
+    init(home: URL, proxy: UsageProxy, locator: CLILocator? = nil) {
         self.home = home
         self.proxy = proxy
-        self.shell = shell
-        self.systemPaths = systemPaths
+        self.locator = locator ?? CLILocator(name: "agy", home: home, homePaths: Self.homePaths)
     }
 
+    static let homePaths = [".local/bin/agy", ".gemini/antigravity-cli/bin/agy"]
     static let timeout: Duration = .seconds(45)
-    static let lookupTimeout: Duration = .seconds(10)
     static let maximumOutputBytes = 256 * 1024
 
     /// Zero-turn JSON quota query; `--log-file /dev/null` keeps periodic polls from creating log files.
@@ -62,27 +53,12 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
         "-p", "/usage", "--output-format", "json", "--log-file", "/dev/null", "--print-timeout", "40s"
     ]
 
-    private var knownPaths: [String] {
-        [".local/bin/agy", ".gemini/antigravity-cli/bin/agy"].map { home.appending(path: $0).path } + systemPaths
-    }
-
     func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool {
-        if knownPaths.contains(where: FileManager.default.isExecutableFile(atPath:)) { return true }
-        let cached = shellCache.state.withLock { state -> AgyShellAnswer.State in
-            if let path = state.path, !FileManager.default.isExecutableFile(atPath: path.path) {
-                state = .init()
-            }
-            return state
-        }
-        if cached.path != nil { return true }
-        guard allowShellLookup, !cached.checked || retryMiss else { return false }
-        let found = await shellLookup()
-        shellCache.state.withLock { $0 = .init(path: found, checked: true) }
-        return found != nil
+        await locator.locate(allowShellLookup: allowShellLookup, retryMiss: retryMiss) != nil
     }
 
     func run() async -> AgyUsageRun {
-        guard let executable = await locate() else { return .unavailable }
+        guard let executable = await locator.locate(retryMiss: false) else { return .unavailable }
         let outputURL = FileManager.default.temporaryDirectory.appending(path: "tidemark-agy-\(UUID().uuidString)")
         guard
             FileManager.default.createFile(
@@ -106,7 +82,7 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
             try? outputHandle.close()
             return .unavailable
         }
-        let completed = await ClaudeCLIUsageCommand.wait(for: process, timeout: Self.timeout)
+        let completed = await CLIProcess.wait(for: process, timeout: Self.timeout)
         try? outputHandle.close()
         guard completed else { return .timedOut }
         let data = try? LocalSources.bounded(outputURL, maximumBytes: Self.maximumOutputBytes)
@@ -116,60 +92,7 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
 
     func environment(for executable: URL) async throws -> [String: String] {
         var environment = try await proxy.agyEnvironment(ProcessInfo.processInfo.environment)
-        let directories = [
-            executable.deletingLastPathComponent().path,
-            executable.resolvingSymlinksInPath().deletingLastPathComponent().path,
-            "/opt/homebrew/bin", "/usr/local/bin"
-        ]
-        let path = environment["PATH"].nonEmpty ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PATH"] = (directories + [path]).joined(separator: ":")
+        environment["PATH"] = CLILocator.searchPath(for: executable, inherited: environment["PATH"])
         return environment
     }
-
-    private func locate() async -> URL? {
-        if let found = knownPaths.first(where: FileManager.default.isExecutableFile(atPath:)) {
-            return URL(fileURLWithPath: found)
-        }
-        if let cached = shellCache.state.withLock({ $0.path }),
-            FileManager.default.isExecutableFile(atPath: cached.path)
-        {
-            return cached
-        }
-        let found = await shellLookup()
-        shellCache.state.withLock { $0 = .init(path: found, checked: true) }
-        return found
-    }
-
-    private func shellLookup() async -> URL? {
-        let shell = self.shell ?? ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
-        let answer = FileManager.default.temporaryDirectory.appending(path: "tidemark-agy-which-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: answer) }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-l", "-i", "-c", #"command -v agy > "$TIDEMARK_ANSWER""#]
-        var environment = ProcessInfo.processInfo.environment
-        environment["TIDEMARK_ANSWER"] = answer.path
-        process.environment = environment
-        process.currentDirectoryURL = home
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil,
-            await ClaudeCLIUsageCommand.wait(for: process, timeout: Self.lookupTimeout),
-            let data = try? LocalSources.bounded(answer, maximumBytes: 4096)
-        else { return nil }
-        let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else { return nil }
-        return URL(fileURLWithPath: path)
-    }
-}
-
-/// Shared by every copy of the command, so a lookup result is reused across refreshes.
-fileprivate final class AgyShellAnswer: Sendable {
-    struct State: Sendable {
-        var path: URL?
-        var checked = false
-    }
-
-    let state = Mutex<State>(State())
 }

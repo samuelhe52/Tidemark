@@ -269,7 +269,7 @@ struct UsageProxyTests {
         let bin = directory.appending(path: ".local/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct })
-        let command = AgyCLIUsageCommand(home: directory, proxy: proxy, systemPaths: [])
+        let command = AgyCLIUsageCommand(home: directory, proxy: proxy)
         let ok = try executable(in: bin, name: "agy", "#!/bin/sh\nprintf '%s' '{\"status\":\"SUCCESS\"}'\n")
         #expect(await command.isInstalled(allowShellLookup: false, retryMiss: false))
         #expect(await command.run() == .finished(Data(#"{"status":"SUCCESS"}"#.utf8)))
@@ -292,7 +292,10 @@ struct UsageProxyTests {
             exec /bin/sh -c "$4"
             """)
         let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct })
-        let command = AgyCLIUsageCommand(home: directory, proxy: proxy, shell: shell.path, systemPaths: [])
+        let locator = CLILocator(
+            name: "agy", home: directory, homePaths: AgyCLIUsageCommand.homePaths, systemDirectories: [],
+            shell: shell.path)
+        let command = AgyCLIUsageCommand(home: directory, proxy: proxy, locator: locator)
 
         // Live off never runs the shell.
         #expect(await command.isInstalled(allowShellLookup: false, retryMiss: true) == false)
@@ -301,9 +304,10 @@ struct UsageProxyTests {
         // Live on checks the shell once and caches the miss for automatic refreshes.
         #expect(await command.isInstalled(allowShellLookup: true, retryMiss: false) == false)
         #expect(await command.isInstalled(allowShellLookup: true, retryMiss: false) == false)
+        #expect(await command.run() == .unavailable)
         #expect(try String(contentsOf: count, encoding: .utf8) == "run\n")
 
-        // After agy appears on PATH, a user refresh retries the miss and caches the executable for run().
+        // After agy appears on PATH, a retry replaces the miss and caches the executable for run().
         _ = try executable(in: customBin, name: "agy", "#!/bin/sh\nprintf '%s' '{\"status\":\"SUCCESS\"}'\n")
         #expect(await command.isInstalled(allowShellLookup: true, retryMiss: true))
         #expect(await command.run() == .finished(Data(#"{"status":"SUCCESS"}"#.utf8)))

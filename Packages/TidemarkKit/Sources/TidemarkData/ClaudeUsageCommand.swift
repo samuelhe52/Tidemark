@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Synchronization
 
 /// How a request to Claude Code to refresh its usage cache ended.
 public enum ClaudeUsageRun: Equatable, Sendable {
@@ -34,16 +33,17 @@ public protocol ClaudeUsageCommand: Sendable {
 struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     let home: URL
     private let proxy: UsageProxy
-    /// Where the login shell found `claude`, so the user's startup files run once, not on every run.
-    private let shellFound = ShellAnswer()
+    private let locator: CLILocator
 
     init(home: URL, proxy: UsageProxy) {
         self.home = home
         self.proxy = proxy
+        locator = CLILocator(
+            name: "claude", home: home,
+            homePaths: [".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude"])
     }
 
     static let timeout: Duration = .seconds(45)
-    static let lookupTimeout: Duration = .seconds(10)
 
     /// No tools, MCP servers, settings (so no user hooks), or saved session.
     static let arguments = [
@@ -52,7 +52,7 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
     ]
 
     func run() async -> ClaudeUsageRun {
-        guard let executable = await locate() else { return .unavailable }
+        guard let executable = await locator.locate(retryMiss: true) else { return .unavailable }
         let process = Process()
         process.executableURL = executable
         process.arguments = Self.arguments
@@ -62,7 +62,7 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return .unavailable }
-        guard await Self.wait(for: process, timeout: Self.timeout) else { return .timedOut }
+        guard await CLIProcess.wait(for: process, timeout: Self.timeout) else { return .timedOut }
         return process.terminationStatus == 0 ? .finished : .failed(exitCode: process.terminationStatus)
     }
 
@@ -88,83 +88,7 @@ struct ClaudeCLIUsageCommand: ClaudeUsageCommand {
         ] {
             environment[key] = "1"
         }
-        // A Node install's `claude` runs `env node`, which sits beside it.
-        let directories = [
-            executable.deletingLastPathComponent().path,
-            executable.resolvingSymlinksInPath().deletingLastPathComponent().path,
-            "/opt/homebrew/bin", "/usr/local/bin"
-        ]
-        let path = environment["PATH"].nonEmpty ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PATH"] = (directories + [path]).joined(separator: ":")
+        environment["PATH"] = CLILocator.searchPath(for: executable, inherited: environment["PATH"])
         return environment
     }
-
-    /// Known install locations first; a GUI app's `PATH` rarely includes them. Then the user's
-    /// login shell, which knows where they installed it. The shell's answer is kept while it
-    /// stays executable.
-    private func locate() async -> URL? {
-        let candidates =
-            [
-                ".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude"
-            ].map { home.appending(path: $0).path } + ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-        if let found = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) {
-            return URL(fileURLWithPath: found)
-        }
-        if let cached = shellFound.path.withLock({ $0 }), FileManager.default.isExecutableFile(atPath: cached.path) {
-            return cached
-        }
-        let found = await shellLookup()
-        shellFound.path.withLock { $0 = found }
-        return found
-    }
-
-    private func shellLookup() async -> URL? {
-        let shell = ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
-        // The answer goes to a file, so nothing the startup files print can mix with it or fill a pipe.
-        let answer = FileManager.default.temporaryDirectory.appending(path: "tidemark-claude-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: answer) }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: shell)
-        // Interactive, so paths added in `.zshrc` count.
-        process.arguments = ["-l", "-i", "-c", #"command -v claude > "$TIDEMARK_ANSWER""#]
-        var environment = ProcessInfo.processInfo.environment
-        environment["TIDEMARK_ANSWER"] = answer.path
-        process.environment = environment
-        process.currentDirectoryURL = home
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil, await Self.wait(for: process, timeout: Self.lookupTimeout),
-            let data = try? LocalSources.bounded(answer, maximumBytes: 4096)
-        else { return nil }
-        let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else { return nil }
-        return URL(fileURLWithPath: path)
-    }
-
-    /// Whether the process exited within `timeout`; otherwise it is terminated, then killed. A
-    /// cancelled task terminates it at once rather than spinning, since its sleeps no longer wait.
-    static func wait(for process: Process, timeout: Duration) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while process.isRunning {
-            if Task.isCancelled {
-                process.terminate()
-                return false
-            }
-            guard clock.now < deadline else {
-                process.terminate()
-                try? await Task.sleep(for: .seconds(2))
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                return false
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        return true
-    }
-}
-
-/// Shared by every copy of the command, so a path found once is reused.
-fileprivate final class ShellAnswer: Sendable {
-    let path = Mutex<URL?>(nil)
 }

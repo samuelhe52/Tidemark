@@ -347,7 +347,7 @@ actor ShellProxyVariables {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil,
-            await ClaudeCLIUsageCommand.wait(for: process, timeout: ClaudeCLIUsageCommand.lookupTimeout),
+            await CLIProcess.wait(for: process, timeout: CLIProcess.shellTimeout),
             let data = try? LocalSources.bounded(answer, maximumBytes: 1024 * 1024)
         else { return [:] }
         return UsageProxy.proxyVariables(in: parse(data))
