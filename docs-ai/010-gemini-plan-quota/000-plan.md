@@ -39,7 +39,7 @@ instead of writing a cache file.
 - Never read Google or Antigravity credentials, including CC Switch's
   `agy_accounts.json`.
 - A missing CLI, a failed run or an unreadable answer is a visible, backed-off status.
-- A slow `agy` run does not delay Claude and Codex readings.
+- Services refresh concurrently, so a refresh takes as long as its slowest service, not the sum.
 
 ### Non-goals
 
@@ -64,7 +64,7 @@ instead of writing a cache file.
     Google host, and also passes SOCKS proxies, which `agy` reads.
   - `UsageService` runs Claude, Codex and Gemini concurrently. Gemini is included only
     when `agy` is at a known install path, found via the login shell while Live Usage is
-    on (misses are cached until a user refresh), or a reading is stored.
+    on (a miss is kept until Live Usage is turned on again or Tidemark relaunches), or a reading is stored.
   - Issues: CLI not found → `cliUnavailable`; timeout, or an answer without windows →
     `requestFailed`; a non-zero exit with a JSON `ERROR` answer → `requestFailed`;
     any other non-zero exit → `cliFailed`; a proxy Tidemark cannot pass →
@@ -83,7 +83,7 @@ instead of writing a cache file.
 | All four buckets | Maintainer decision. The plan's Claude & GPT group is part of the same subscription. |
 | One sideways-scrolling row | Maintainer comment on the plan: "show them in one single row, allowing horizontal scrolling, and hide the scroll bar". |
 | Shown only when `agy` exists or a reading is stored | Maintainer decision. Users without Antigravity would otherwise see a permanent empty section, since there is no passive source. |
-| Concurrent refresh | Maintainer decision. A 7 s run would otherwise delay every refresh. |
+| Concurrent refresh | Maintainer decision. A 7 s run would otherwise add to the other services' time. Results still publish together. |
 | No passive source | Maintainer decision. With Live Usage off, only the last stored reading shows. |
 
 ## Validation and acceptance criteria
@@ -97,4 +97,4 @@ instead of writing a cache file.
   scrolls sideways, and vertical scrolling over it still moves the dashboard.
 
 ## Amendments
-None yet.
+- Updated 2026-11-26: results publish together, PATH-only `agy` is discovered, missed lookups are kept, and both CLIs share one locator; corrects the concurrency and discovery text — see [002-coordinated-refresh-and-lookup.md](002-coordinated-refresh-and-lookup.md)

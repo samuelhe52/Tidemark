@@ -4,6 +4,9 @@
 | Date | Change | Ref |
 | --- | --- | --- |
 | 2026-11-26 | Inspected `agy` 1.5.16, drafted HTML plan, received maintainer decisions and horizontal-row comment, wrote `000-plan.md`, implemented data layer, dashboard horizontal row, and tests. | `ec71d1d` |
+| 2026-11-26 | Recorded the decision and implementation. | `911074b` |
+| 2026-11-26 | Discovered PATH-only `agy` installs. | `56285e1` |
+| 2026-11-26 | Kept coordinated results and missed lookups; extracted the shared locator. See [002](002-coordinated-refresh-and-lookup.md). | `f8df0da`, `2a29dde` |
 
 ## Outcome and current state (as of 2026-11-26)
 
@@ -12,8 +15,8 @@ entry 008's CLI-delegated credential boundary:
 
 - `QuotaService.gemini` (raw value `gemini`, account key `gemini:local`) is included in
   `UsageService.refresh` only when `agy` exists at a known install path, is discovered on
-  the login shell `PATH` while Live Usage is on (caching misses until a user-initiated
-  refresh), or `usage-snapshots.json` already holds `gemini:local`.
+  the login shell `PATH` while Live Usage is on (a miss is kept until
+  Live Usage is turned on again or Tidemark relaunches), or `usage-snapshots.json` already holds `gemini:local`.
 - With Live Usage on, `AgyCLIUsageCommand` runs
   `agy -p /usage --output-format json --log-file /dev/null --print-timeout 40s` with cwd
   `~`, routing proxy variables (HTTP, HTTPS, and SOCKS) through `UsageProxy.agyEnvironment`
@@ -25,7 +28,7 @@ entry 008's CLI-delegated credential boundary:
   marking missing or out-of-range fractions unknown. `QuotaWindow.isWeekly` covers the
   group-scoped weekly windows so weekly pace warnings apply.
 - `UsageService.performRefresh` runs Claude, Codex, and Gemini refreshes concurrently via
-  `async let` so `agy`'s ~7 s run does not stall Claude or Codex.
+  `async let` and returns them together, so a refresh is bounded by its slowest service.
 - `DashboardView` renders Gemini's windows in a single sideways-scrolling row using a
   shared `HorizontalScrollView` (extracted from `RequestLogHorizontalScrollView`) with
   hidden scrollbars, horizontal scroll-offset preservation across dashboard refreshes,
@@ -37,6 +40,7 @@ entry 008's CLI-delegated credential boundary:
 
 Key source files:
 - `Packages/TidemarkKit/Sources/TidemarkData/AgyUsageCommand.swift`
+- `Packages/TidemarkKit/Sources/TidemarkData/CLILocator.swift`
 - `Packages/TidemarkKit/Sources/TidemarkData/QuotaObservation.swift`
 - `Packages/TidemarkKit/Sources/TidemarkData/AccountKey.swift`
 - `Packages/TidemarkKit/Sources/TidemarkData/QuotaParser.swift`
@@ -66,7 +70,7 @@ Key source files:
 
 ## Validation
 
-Run on 2026-11-26:
+Run on 2026-11-26 for `ec71d1d` (later runs are in [002](002-coordinated-refresh-and-lookup.md)):
 - `swift format -i` on all 18 touched Swift files.
 - `make test`: passed — 8 Engine tests (2 suites) and 72 Data tests (9 suites), including
   7 new tests covering `QuotaParser.agyUsage`, `UsageService` Gemini presence/live/off/gate/error
