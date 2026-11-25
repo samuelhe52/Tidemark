@@ -11,8 +11,9 @@ Live Gemini plan quota is implemented in `TidemarkData` and the app target, mirr
 entry 008's CLI-delegated credential boundary:
 
 - `QuotaService.gemini` (raw value `gemini`, account key `gemini:local`) is included in
-  `UsageService.refresh` only when `agy` exists at a known install path (or was cached by
-  a previous shell lookup) or `usage-snapshots.json` already holds `gemini:local`.
+  `UsageService.refresh` only when `agy` exists at a known install path, is discovered on
+  the login shell `PATH` while Live Usage is on (caching misses until a user-initiated
+  refresh), or `usage-snapshots.json` already holds `gemini:local`.
 - With Live Usage on, `AgyCLIUsageCommand` runs
   `agy -p /usage --output-format json --log-file /dev/null --print-timeout 40s` with cwd
   `~`, routing proxy variables (HTTP, HTTPS, and SOCKS) through `UsageProxy.agyEnvironment`
@@ -87,7 +88,4 @@ Not yet verified:
 
 ## Open questions
 
-- If `agy` is installed only outside known paths (`~/.local/bin/agy`,
-  `~/.gemini/antigravity-cli/bin/agy`, Homebrew) and has never run before, `isInstalled`
-  stays false so no shell lookup runs on startup. Revisit if users install `agy` in custom
-  directories.
+None.

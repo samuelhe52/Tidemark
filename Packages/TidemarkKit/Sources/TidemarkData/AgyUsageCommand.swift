@@ -27,8 +27,10 @@ public enum AgyUsageRun: Equatable, Sendable {
 /// `agy` answers `/usage` itself, without a model turn or saved conversation, and owns its
 /// own credentials and token renewal. Tidemark never reads Google or Antigravity credentials.
 public protocol AgyUsageCommand: Sendable {
-    /// True when `agy` exists at a known install path or was already located by the login shell.
-    var isInstalled: Bool { get }
+    /// True when `agy` exists at a known install path, a cached shell path, or—when
+    /// `allowShellLookup` is true—on the user's login shell `PATH`. A shell miss is cached
+    /// until `retryMiss` is true so periodic refreshes do not repeatedly spawn a login shell.
+    func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool
     func run() async -> AgyUsageRun
 }
 
@@ -36,12 +38,19 @@ public protocol AgyUsageCommand: Sendable {
 struct AgyCLIUsageCommand: AgyUsageCommand {
     let home: URL
     private let proxy: UsageProxy
-    /// Where the login shell found `agy`, so the user's startup files run once, not on every run.
-    private let shellFound = AgyShellAnswer()
+    private let shell: String?
+    private let systemPaths: [String]
+    /// Where the login shell looked for `agy`, so the user's startup files do not run on every tick.
+    private let shellCache = AgyShellAnswer()
 
-    init(home: URL, proxy: UsageProxy) {
+    init(
+        home: URL, proxy: UsageProxy, shell: String? = nil,
+        systemPaths: [String] = ["/opt/homebrew/bin/agy", "/usr/local/bin/agy"]
+    ) {
         self.home = home
         self.proxy = proxy
+        self.shell = shell
+        self.systemPaths = systemPaths
     }
 
     static let timeout: Duration = .seconds(45)
@@ -54,16 +63,22 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
     ]
 
     private var knownPaths: [String] {
-        [".local/bin/agy", ".gemini/antigravity-cli/bin/agy"].map { home.appending(path: $0).path }
-            + ["/opt/homebrew/bin/agy", "/usr/local/bin/agy"]
+        [".local/bin/agy", ".gemini/antigravity-cli/bin/agy"].map { home.appending(path: $0).path } + systemPaths
     }
 
-    var isInstalled: Bool {
+    func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool {
         if knownPaths.contains(where: FileManager.default.isExecutableFile(atPath:)) { return true }
-        if let cached = shellFound.path.withLock({ $0 }), FileManager.default.isExecutableFile(atPath: cached.path) {
-            return true
+        let cached = shellCache.state.withLock { state -> AgyShellAnswer.State in
+            if let path = state.path, !FileManager.default.isExecutableFile(atPath: path.path) {
+                state = .init()
+            }
+            return state
         }
-        return false
+        if cached.path != nil { return true }
+        guard allowShellLookup, !cached.checked || retryMiss else { return false }
+        let found = await shellLookup()
+        shellCache.state.withLock { $0 = .init(path: found, checked: true) }
+        return found != nil
     }
 
     func run() async -> AgyUsageRun {
@@ -115,16 +130,18 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
         if let found = knownPaths.first(where: FileManager.default.isExecutableFile(atPath:)) {
             return URL(fileURLWithPath: found)
         }
-        if let cached = shellFound.path.withLock({ $0 }), FileManager.default.isExecutableFile(atPath: cached.path) {
+        if let cached = shellCache.state.withLock({ $0.path }),
+            FileManager.default.isExecutableFile(atPath: cached.path)
+        {
             return cached
         }
         let found = await shellLookup()
-        shellFound.path.withLock { $0 = found }
+        shellCache.state.withLock { $0 = .init(path: found, checked: true) }
         return found
     }
 
     private func shellLookup() async -> URL? {
-        let shell = ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
+        let shell = self.shell ?? ProcessInfo.processInfo.environment["SHELL"].nonEmpty ?? "/bin/zsh"
         let answer = FileManager.default.temporaryDirectory.appending(path: "tidemark-agy-which-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: answer) }
         let process = Process()
@@ -147,7 +164,12 @@ struct AgyCLIUsageCommand: AgyUsageCommand {
     }
 }
 
-/// Shared by every copy of the command, so a path found once is reused.
+/// Shared by every copy of the command, so a lookup result is reused across refreshes.
 fileprivate final class AgyShellAnswer: Sendable {
-    let path = Mutex<URL?>(nil)
+    struct State: Sendable {
+        var path: URL?
+        var checked = false
+    }
+
+    let state = Mutex<State>(State())
 }

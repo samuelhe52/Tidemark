@@ -225,6 +225,22 @@ struct LiveUsageTests {
         #expect(fixture.agyUsage.runs == 0)
     }
 
+    @Test func geminiDiscoversPathOnlyAgyWhenLiveIsEnabled() async throws {
+        let fixture = try Fixture()
+        fixture.agyUsage.shellInstalled = true
+        fixture.agyUsage.respond = { .finished(Data(Fixture.agyUsagePayload.utf8)) }
+        let service = fixture.service(live: false, now: now)
+        let passive = await service.refresh(userInitiated: true)
+        #expect(!passive.contains { $0.service == .gemini })
+        #expect(fixture.agyUsage.runs == 0)
+
+        await service.setLiveEnabled(true)
+        let live = await service.refresh(userInitiated: true)
+        let gemini = try #require(live.first { $0.service == .gemini }?.accounts.first)
+        #expect(gemini.windows.count == 4 && gemini.issue == nil)
+        #expect(fixture.agyUsage.runs == 1)
+    }
+
     @Test func geminiLiveOffNeverRunsAgyAndShowsStoredReading() async throws {
         let fixture = try Fixture()
         fixture.agyUsage.isInstalled = true
@@ -444,6 +460,7 @@ final class FakeClaudeUsage: ClaudeUsageCommand, @unchecked Sendable {
 final class FakeAgyUsage: AgyUsageCommand, @unchecked Sendable {
     private let lock = NSLock()
     private var installed = false
+    private var foundByShell = false
     private var handler: @Sendable () -> AgyUsageRun = { .unavailable }
     private var count = 0
 
@@ -451,10 +468,18 @@ final class FakeAgyUsage: AgyUsageCommand, @unchecked Sendable {
         get { lock.withLock { installed } }
         set { lock.withLock { installed = newValue } }
     }
+    var shellInstalled: Bool {
+        get { lock.withLock { foundByShell } }
+        set { lock.withLock { foundByShell = newValue } }
+    }
     var runs: Int { lock.withLock { count } }
     var respond: @Sendable () -> AgyUsageRun {
         get { lock.withLock { handler } }
         set { lock.withLock { handler = newValue } }
+    }
+
+    func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool {
+        lock.withLock { installed || (allowShellLookup && foundByShell) }
     }
 
     func run() async -> AgyUsageRun {

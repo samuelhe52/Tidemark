@@ -269,12 +269,45 @@ struct UsageProxyTests {
         let bin = directory.appending(path: ".local/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct })
-        let command = AgyCLIUsageCommand(home: directory, proxy: proxy)
+        let command = AgyCLIUsageCommand(home: directory, proxy: proxy, systemPaths: [])
         let ok = try executable(in: bin, name: "agy", "#!/bin/sh\nprintf '%s' '{\"status\":\"SUCCESS\"}'\n")
-        #expect(command.isInstalled)
+        #expect(await command.isInstalled(allowShellLookup: false, retryMiss: false))
         #expect(await command.run() == .finished(Data(#"{"status":"SUCCESS"}"#.utf8)))
         try Data("#!/bin/sh\nprintf '%s' '{\"status\":\"ERROR\"}'\nexit 1\n".utf8).write(to: ok)
         #expect(await command.run() == .failed(exitCode: 1, output: Data(#"{"status":"ERROR"}"#.utf8)))
+    }
+
+    @Test func agyCommandDiscoversPathOnlyInstallAndCachesMisses() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let customBin = directory.appending(path: "custom-bin")
+        try FileManager.default.createDirectory(at: customBin, withIntermediateDirectories: true)
+        let count = directory.appending(path: "shell-runs")
+        let shell = try executable(
+            in: directory, name: "fake-shell",
+            """
+            #!/bin/sh
+            echo run >> "\(count.path)"
+            export PATH="\(customBin.path):/usr/bin:/bin"
+            exec /bin/sh -c "$4"
+            """)
+        let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct })
+        let command = AgyCLIUsageCommand(home: directory, proxy: proxy, shell: shell.path, systemPaths: [])
+
+        // Live off never runs the shell.
+        #expect(await command.isInstalled(allowShellLookup: false, retryMiss: true) == false)
+        #expect(!FileManager.default.fileExists(atPath: count.path))
+
+        // Live on checks the shell once and caches the miss for automatic refreshes.
+        #expect(await command.isInstalled(allowShellLookup: true, retryMiss: false) == false)
+        #expect(await command.isInstalled(allowShellLookup: true, retryMiss: false) == false)
+        #expect(try String(contentsOf: count, encoding: .utf8) == "run\n")
+
+        // After agy appears on PATH, a user refresh retries the miss and caches the executable for run().
+        _ = try executable(in: customBin, name: "agy", "#!/bin/sh\nprintf '%s' '{\"status\":\"SUCCESS\"}'\n")
+        #expect(await command.isInstalled(allowShellLookup: true, retryMiss: true))
+        #expect(await command.run() == .finished(Data(#"{"status":"SUCCESS"}"#.utf8)))
+        #expect(try String(contentsOf: count, encoding: .utf8) == "run\nrun\n")
     }
 
     private func temporaryDirectory() throws -> URL {

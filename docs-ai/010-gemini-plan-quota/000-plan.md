@@ -63,8 +63,8 @@ instead of writing a cache file.
   - `UsageProxy` gives the CLI the same proxy variables as Claude Code, targeted at the
     Google host, and also passes SOCKS proxies, which `agy` reads.
   - `UsageService` runs Claude, Codex and Gemini concurrently. Gemini is included only
-    when `agy` is at a known install path (or was found by the shell before) or a
-    reading is stored.
+    when `agy` is at a known install path, found via the login shell while Live Usage is
+    on (misses are cached until a user refresh), or a reading is stored.
   - Issues: CLI not found → `cliUnavailable`; timeout, or an answer without windows →
     `requestFailed`; a non-zero exit with a JSON `ERROR` answer → `requestFailed`;
     any other non-zero exit → `cliFailed`; a proxy Tidemark cannot pass →

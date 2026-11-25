@@ -186,7 +186,7 @@ public actor UsageService {
     /// see no empty section.
     private func geminiUsage(userInitiated: Bool) async -> ServiceUsage? {
         let id = AccountKey.gemini
-        let installed = environment.agyUsage.isInstalled
+        let installed = await environment.agyUsage.isInstalled(allowShellLookup: liveEnabled, retryMiss: userInitiated)
         guard installed || store?[id] != nil else { return nil }
         let reading = await liveGemini(accountID: id, userInitiated: userInitiated)
         let account = resolve(
