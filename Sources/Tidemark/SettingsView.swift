@@ -315,7 +315,9 @@ struct AccountsSettingsView: View {
             } header: {
                 Text("Compact Summary")
             } footer: {
-                Text("Automatic shows the account currently in use. Off leaves the service out of the summary.")
+                Text(
+                    "Automatic shows the account currently in use. Off leaves the service out of the summary. Choose which quota window appears for each service."
+                )
             }
             Section {
                 if settings.accounts.isEmpty {
@@ -337,20 +339,36 @@ struct AccountsSettingsView: View {
             get: { settings.display.summaryChoice(for: service) },
             set: { settings.display.summaryChoices[service] = $0 == .automatic ? nil : $0 }
         )
+        let window = Binding(
+            get: { settings.display.summaryWindow(for: service) },
+            set: { settings.display.summaryWindows[service] = $0 == .weekly ? nil : $0 }
+        )
         let accounts = settings.orderedAccounts.filter {
             $0.service == service && !settings.display.hiddenAccountIDs.contains($0.id)
         }
-        return Picker(QuotaText.serviceName(service), selection: choice) {
-            Text("Automatic").tag(QuotaSummaryChoice.automatic)
-            ForEach(accounts) { account in
-                Text(QuotaText.accountName(account)).tag(
-                    QuotaSummaryChoice.account(account.id))
+        return LabeledContent(QuotaText.serviceName(service)) {
+            HStack(spacing: 8) {
+                Picker("Account", selection: choice) {
+                    Text("Automatic").tag(QuotaSummaryChoice.automatic)
+                    ForEach(accounts) { account in
+                        Text(QuotaText.accountName(account)).tag(
+                            QuotaSummaryChoice.account(account.id))
+                    }
+                    if case .account(let id) = choice.wrappedValue, !accounts.contains(where: { $0.id == id }) {
+                        Text("Selected account unavailable").tag(QuotaSummaryChoice.account(id))
+                    }
+                    Divider()
+                    Text("Off").tag(QuotaSummaryChoice.off)
+                }
+                .labelsHidden()
+                Picker("Window", selection: window) {
+                    ForEach(QuotaSummaryWindow.allCases, id: \.self) { option in
+                        Text(QuotaText.summaryWindowName(option)).tag(option)
+                    }
+                }
+                .labelsHidden()
+                .disabled(choice.wrappedValue == .off)
             }
-            if case .account(let id) = choice.wrappedValue, !accounts.contains(where: { $0.id == id }) {
-                Text("Selected account unavailable").tag(QuotaSummaryChoice.account(id))
-            }
-            Divider()
-            Text("Off").tag(QuotaSummaryChoice.off)
         }
     }
 

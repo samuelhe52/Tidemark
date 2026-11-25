@@ -40,6 +40,7 @@ final class SettingsStore {
             defaults.set(display.hiddenAccountIDs.sorted(), forKey: DefaultsKey.hiddenAccountIDs)
             defaults.set(display.accountOrder, forKey: DefaultsKey.accountOrder)
             defaults.set(display.storedSummaryChoices, forKey: DefaultsKey.summaryChoices)
+            defaults.set(display.storedSummaryWindows, forKey: DefaultsKey.summaryWindows)
             defaults.set(display.percentageStyle.rawValue, forKey: DefaultsKey.percentageStyle)
             save(display.resetTimeStyle.rawValue, DefaultsKey.resetTimeStyle)
         }
@@ -105,6 +106,8 @@ final class SettingsStore {
         defaults.removeObject(forKey: DefaultsKey.legacySummaryAccountID)
         display.storedSummaryChoices =
             defaults.dictionary(forKey: DefaultsKey.summaryChoices) as? [String: String] ?? [:]
+        display.storedSummaryWindows =
+            defaults.dictionary(forKey: DefaultsKey.summaryWindows) as? [String: String] ?? [:]
         display.percentageStyle =
             defaults.string(forKey: DefaultsKey.percentageStyle)
             .flatMap(QuotaPercentageStyle.init(rawValue:)) ?? .remaining

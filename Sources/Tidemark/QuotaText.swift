@@ -43,9 +43,18 @@ enum QuotaText {
         }
     }
 
-    /// "5h", "7d": the window length in one token, for the one-line summary.
+    /// "5h", "7d", or a scoped label like "7d Gemini", "7d 3P", "7d Sonnet", for the one-line summary.
     static func shortWindowName(_ window: QuotaWindow) -> String {
-        window.duration.map(duration) ?? ""
+        let length = window.duration.map(duration) ?? ""
+        let scope: String? =
+            if let model = window.weeklyModel {
+                model.capitalized
+            } else if let group = window.agyGroup {
+                group == "gemini" ? String(localized: "Gemini") : String(localized: "3P")
+            } else {
+                nil
+            }
+        return [length, scope ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// The account's email, or a generic name when the service reported none.
@@ -130,10 +139,12 @@ enum QuotaText {
         "\(Int(value.rounded()))%"
     }
 
-    /// The window that runs out first, among those with a current reading.
-    static func tightestWindow(_ account: AccountUsage, now: Date) -> (QuotaWindow, Double)? {
-        account.windows.compactMap { window in window.remainingPercent(at: now).map { (window, $0) } }
-            .min { $0.1 < $1.1 }
+    static func summaryWindowName(_ preference: QuotaSummaryWindow) -> String {
+        switch preference {
+        case .weekly: String(localized: "Weekly")
+        case .fiveHour: String(localized: "5-hour")
+        case .lowestRemaining: String(localized: "Lowest remaining")
+        }
     }
 
     static func percentageDescription(_ remaining: Double, style: QuotaPercentageStyle) -> String {
@@ -184,7 +195,9 @@ enum QuotaText {
         }
         return entries.map { entry in
             let name = shortServiceName(entry.service)
-            guard let account = entry.account, let (window, remaining) = tightestWindow(account, now: now) else {
+            guard let account = entry.account,
+                let (window, remaining) = preferences.summaryWindow(for: account, at: now)
+            else {
                 return "\(name) —"
             }
             return [name, shortWindowName(window), percentageDescription(remaining, style: preferences.percentageStyle)]

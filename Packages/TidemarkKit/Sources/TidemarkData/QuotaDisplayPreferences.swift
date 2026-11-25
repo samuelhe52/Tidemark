@@ -19,6 +19,11 @@ public enum QuotaResetTimeStyle: String, Codable, CaseIterable, Sendable {
     case countdown, clock
 }
 
+/// Which quota window a service displays in the compact summary.
+public enum QuotaSummaryWindow: String, Codable, CaseIterable, Sendable {
+    case weekly, fiveHour, lowestRemaining
+}
+
 /// How one service is represented in the compact summary.
 public enum QuotaSummaryChoice: Hashable, Sendable {
     case automatic
@@ -58,6 +63,8 @@ public struct QuotaDisplayPreferences: Equatable, Sendable {
     public var accountOrder: [String] = []
     /// Services without an entry use Automatic.
     public var summaryChoices: [QuotaService: QuotaSummaryChoice] = [:]
+    /// Services without an entry use Weekly.
+    public var summaryWindows: [QuotaService: QuotaSummaryWindow] = [:]
     public var percentageStyle: QuotaPercentageStyle = .remaining
     public var resetTimeStyle: QuotaResetTimeStyle = .countdown
 
@@ -79,6 +86,27 @@ public struct QuotaDisplayPreferences: Equatable, Sendable {
                         let choice = QuotaSummaryChoice(storedValue: value)
                     else { return nil }
                     return (service, choice)
+                })
+        }
+    }
+
+    /// `summaryWindows` as stored: service raw values to `QuotaSummaryWindow.rawValue`. The default
+    /// (`.weekly`) is omitted; unknown services and values are dropped.
+    public var storedSummaryWindows: [String: String] {
+        get {
+            Dictionary(
+                uniqueKeysWithValues: summaryWindows.compactMap { service, window in
+                    window == .weekly ? nil : (service.rawValue, window.rawValue)
+                })
+        }
+        set {
+            summaryWindows = Dictionary(
+                uniqueKeysWithValues: newValue.compactMap { key, value in
+                    guard let service = QuotaService(rawValue: key),
+                        let window = QuotaSummaryWindow(rawValue: value),
+                        window != .weekly
+                    else { return nil }
+                    return (service, window)
                 })
         }
     }
@@ -120,6 +148,48 @@ public struct QuotaDisplayPreferences: Equatable, Sendable {
 
     public func summaryChoice(for service: QuotaService) -> QuotaSummaryChoice {
         summaryChoices[service] ?? .automatic
+    }
+
+    public func summaryWindow(for service: QuotaService) -> QuotaSummaryWindow {
+        summaryWindows[service] ?? .weekly
+    }
+
+    /// The window to display in the compact summary for `account`, honoring the per-service window
+    /// preference and falling back to the lowest-remaining current window when the preferred kind is absent.
+    public func summaryWindow(for account: AccountUsage, at now: Date) -> (window: QuotaWindow, remaining: Double)? {
+        let live = account.windows.compactMap { window in
+            window.remainingPercent(at: now).map { (window: window, remaining: $0) }
+        }
+        guard !live.isEmpty else { return nil }
+        switch summaryWindow(for: account.service) {
+        case .lowestRemaining:
+            return live.min { $0.remaining < $1.remaining }
+        case .weekly:
+            if let overall = live.first(where: { $0.window.id == QuotaWindow.sevenDayID }) {
+                return overall
+            }
+            let primaryAgy = QuotaWindow.agyID(QuotaWindow.sevenDayID, group: "gemini")
+            if let gemini = live.first(where: { $0.window.id == primaryAgy }) {
+                return gemini
+            }
+            if let weekly = live.filter({ $0.window.isWeekly }).min(by: { $0.remaining < $1.remaining }) {
+                return weekly
+            }
+            return live.min { $0.remaining < $1.remaining }
+        case .fiveHour:
+            if let overall = live.first(where: { $0.window.id == QuotaWindow.fiveHourID }) {
+                return overall
+            }
+            let primaryAgy = QuotaWindow.agyID(QuotaWindow.fiveHourID, group: "gemini")
+            if let gemini = live.first(where: { $0.window.id == primaryAgy }) {
+                return gemini
+            }
+            let prefix = "\(QuotaWindow.fiveHourID)_"
+            if let fiveHour = live.filter({ $0.window.id.hasPrefix(prefix) }).min(by: { $0.remaining < $1.remaining }) {
+                return fiveHour
+            }
+            return live.min { $0.remaining < $1.remaining }
+        }
     }
 
     /// One entry per service that is not Off, in the order services first appear among visible accounts.

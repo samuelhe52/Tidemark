@@ -17,6 +17,7 @@ enum DefaultsKey {
     static let hiddenAccountIDs = "hiddenDashboardAccountIDs"
     static let accountOrder = "dashboardAccountOrder"
     static let summaryChoices = "compactSummaryChoices"
+    static let summaryWindows = "compactSummaryWindows"
     static let percentageStyle = "quotaPercentageStyle"
     static let resetTimeStyle = "quotaResetTimeStyle"
     static let dockPlacement = "dockPlacement"
