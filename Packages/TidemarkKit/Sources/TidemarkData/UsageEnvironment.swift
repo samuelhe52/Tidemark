@@ -29,11 +29,14 @@ public struct UsageEnvironment: Sendable {
     public var transport: any HTTPTransport
     /// Asks Claude Code to refresh its usage cache; Claude's credentials are never read.
     public var claudeUsage: any ClaudeUsageCommand
+    /// Asks the Antigravity CLI (`agy`) for Gemini plan quota; credentials are never read.
+    public var agyUsage: any AgyUsageCommand
     public var now: @Sendable () -> Date
 
     public init(
         home: URL, codexHome: URL, ccSwitchHome: URL, supportDirectory: URL, credentials: any CredentialStore,
-        transport: any HTTPTransport, claudeUsage: any ClaudeUsageCommand, now: @escaping @Sendable () -> Date
+        transport: any HTTPTransport, claudeUsage: any ClaudeUsageCommand, agyUsage: any AgyUsageCommand,
+        now: @escaping @Sendable () -> Date
     ) {
         self.home = home
         self.codexHome = codexHome
@@ -42,11 +45,12 @@ public struct UsageEnvironment: Sendable {
         self.credentials = credentials
         self.transport = transport
         self.claudeUsage = claudeUsage
+        self.agyUsage = agyUsage
         self.now = now
     }
 
     /// The real paths (honoring `$CODEX_HOME`), the login Keychain, an uncached URL session, and
-    /// the installed `claude`.
+    /// the installed `claude` and `agy`.
     public static var current: UsageEnvironment { current(proxyOverride: ProxyOverride()) }
 
     /// Like `current`, routing through the settings proxy in `proxyOverride` when it has one.
@@ -63,7 +67,7 @@ public struct UsageEnvironment: Sendable {
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
             credentials: KeychainCredentialStore(),
             transport: URLSessionTransport(proxy: proxy), claudeUsage: ClaudeCLIUsageCommand(home: home, proxy: proxy),
-            now: { Date() })
+            agyUsage: AgyCLIUsageCommand(home: home, proxy: proxy), now: { Date() })
     }
 }
 

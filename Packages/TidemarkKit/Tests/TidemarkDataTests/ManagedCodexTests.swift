@@ -119,7 +119,7 @@ struct ManagedCodexTests {
             ccSwitchHome: fixture.home.appending(path: ".cc-switch"),
             supportDirectory: fixture.home.appending(path: "Library/Application Support/Tidemark"),
             credentials: fixture.credentials, transport: fixture.transport,
-            claudeUsage: fixture.claudeUsage, now: { now + 0.331 })
+            claudeUsage: fixture.claudeUsage, agyUsage: fixture.agyUsage, now: { now + 0.331 })
         _ = try await ManagedCodexCredentials(environment: environment).token(for: account("a"))
         // CC Switch decodes this field as `i64`, like this strict decoder.
         struct Store: Decodable {
@@ -306,7 +306,7 @@ struct ManagedCodexTests {
             ccSwitchHome: fixture.home.appending(path: ".cc-switch"),
             supportDirectory: fixture.home.appending(path: "Library/Application Support/Tidemark"),
             credentials: fixture.credentials, transport: fixture.transport,
-            claudeUsage: fixture.claudeUsage, now: { now })
+            claudeUsage: fixture.claudeUsage, agyUsage: fixture.agyUsage, now: { now })
     }
 
     private func manager(_ fixture: Fixture) -> ManagedCodexCredentials {

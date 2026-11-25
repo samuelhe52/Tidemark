@@ -72,8 +72,8 @@ struct QuotaDisplayPreferencesTests {
         #expect(preferences.storedSummaryChoices == ["claude": "off", "codex": "account:codex:managed:a"])
         preferences.summaryChoices[.claude] = .automatic
         #expect(preferences.storedSummaryChoices == ["codex": "account:codex:managed:a"])
-        preferences.storedSummaryChoices = ["claude": "account:c", "codex": "bogus", "gemini": "off"]
-        #expect(preferences.summaryChoices == [.claude: .account("c")])
+        preferences.storedSummaryChoices = ["claude": "account:c", "codex": "bogus", "gemini": "off", "unknown": "off"]
+        #expect(preferences.summaryChoices == [.claude: .account("c"), .gemini: .off])
     }
 
     @Test func normalizeDropsDuplicateOrderAndChoicesForHiddenAccounts() {

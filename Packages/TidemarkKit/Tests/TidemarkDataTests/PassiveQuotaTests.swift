@@ -125,4 +125,61 @@ struct PassiveQuotaTests {
         #expect(services.last?.accounts.first?.windows.first?.id == "seven_day")
         #expect(try Data(contentsOf: rollout) == Data(content.utf8))
     }
+
+    @Test func agyUsageParsesObservedGroupsDropsUnknownAndRejectsInvalid() throws {
+        let now = Date(timeIntervalSince1970: 1_795_600_000)
+        let payload = #"""
+            {
+              "status": "SUCCESS",
+              "command": {
+                "name": "usage",
+                "data": {
+                  "groups": [
+                    {
+                      "name": "Gemini Models",
+                      "buckets": [
+                        {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.97, "reset_time": "2026-12-02T18:09:19Z"},
+                        {"id": "gemini-5h", "window": "5h", "remaining_fraction": 0.89, "reset_time": "2026-11-25T23:09:19Z"},
+                        {"id": "gemini-monthly", "window": "monthly", "remaining_fraction": 0.5}
+                      ]
+                    },
+                    {
+                      "name": "Claude and GPT models",
+                      "buckets": [
+                        {"id": "3p-weekly", "window": "weekly", "remaining_fraction": 1, "reset_time": "2026-12-02T18:39:32Z"},
+                        {"id": "3p-5h", "window": "5h", "reset_time": "2026-11-25T23:39:32Z"}
+                      ]
+                    },
+                    {
+                      "name": "Other",
+                      "buckets": [
+                        {"id": "other-5h", "window": "5h", "remaining_fraction": 0.5}
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+            """#
+        let windows = try #require(QuotaParser.agyUsage(Data(payload.utf8), observedAt: now))
+        #expect(windows.map(\.id) == ["five_hour_gemini", "seven_day_gemini", "five_hour_3p", "seven_day_3p"])
+        #expect(windows.map(\.agyGroup) == ["gemini", "gemini", "3p", "3p"])
+        #expect(windows.map(\.isWeekly) == [false, true, false, true])
+        #expect(windows.map(\.duration) == [18000, 604800, 18000, 604800])
+        #expect(abs((windows[0].usedPercent ?? -1) - 11) < 0.001)
+        #expect(abs((windows[1].usedPercent ?? -1) - 3) < 0.001)
+        #expect(windows[2].usedPercent == nil)
+        #expect(windows[3].usedPercent == 0)
+        #expect(windows[0].source == .live && windows[0].resetsAt != nil)
+
+        let outOfRange =
+            #"{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":1.5}]}]}}}"#
+        #expect(try #require(QuotaParser.agyUsage(Data(outOfRange.utf8), observedAt: now)).first?.usedPercent == nil)
+
+        let errorPayload = Data(#"{"status":"ERROR","error":"proxyconnect tcp"}"#.utf8)
+        #expect(QuotaParser.agyUsage(errorPayload, observedAt: now) == nil)
+        #expect(QuotaParser.isAgyErrorResponse(errorPayload))
+        #expect(!QuotaParser.isAgyErrorResponse(Data(payload.utf8)))
+        #expect(!QuotaParser.isAgyErrorResponse(Data("not json".utf8)))
+    }
 }

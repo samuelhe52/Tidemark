@@ -8,7 +8,7 @@
 import Foundation
 
 public enum QuotaService: String, CaseIterable, Codable, Sendable {
-    case claude, codex
+    case claude, codex, gemini
 }
 
 public enum QuotaSource: String, Codable, Sendable {
@@ -78,14 +78,29 @@ extension QuotaWindow {
         let model = String(id.dropFirst(prefix.count))
         return Self.claudeModels.contains(model) ? model : nil
     }
+
+    /// Antigravity quota groups, in display order: the prefix of the vendor bucket ID.
+    public static let agyGroups = ["gemini", "3p"]
+
+    /// `five_hour_gemini`, `seven_day_3p`: a length ID, then the group.
+    static func agyID(_ base: String, group: String) -> String { "\(base)_\(group)" }
+
+    /// The Antigravity group a window covers, or nil for any other window.
+    public var agyGroup: String? {
+        Self.agyGroups.first {
+            id == Self.agyID(Self.fiveHourID, group: $0) || id == Self.agyID(Self.sevenDayID, group: $0)
+        }
+    }
 }
 
 extension QuotaWindow {
     /// Shortest stretch of a window that says anything about its pace; earlier readings swing wildly.
     static let minimumPaceElapsed: TimeInterval = 3600
 
-    /// Whether this is a weekly window, overall or for one model.
-    public var isWeekly: Bool { id == Self.sevenDayID || weeklyModel != nil }
+    /// Whether this is a weekly window, overall, for one model, or for one group.
+    public var isWeekly: Bool {
+        id == Self.sevenDayID || weeklyModel != nil || (agyGroup != nil && id.hasPrefix("\(Self.sevenDayID)_"))
+    }
 
     /// When the window runs out if usage continues at its average pace since the window opened.
     ///
@@ -120,10 +135,9 @@ public enum QuotaReadIssue: String, Equatable, Codable, Sendable {
     case credentialSaveFailed
     /// The Keychain read was denied or cancelled, or the service answered 401/403.
     case accessDenied
-    /// Live Claude usage needs Claude Code, and no `claude` executable was found.
+    /// Live usage needs a CLI (`claude` or `agy`), and no executable was found.
     case cliUnavailable
-    /// Claude Code exited with an error, so it could not answer `/usage` (not a sign-in problem:
-    /// signed out, it exits normally).
+    /// The CLI exited with an error without returning a usage or service-error payload.
     case cliFailed
     /// The service answered 429, or Tidemark is backing off after it.
     case rateLimited

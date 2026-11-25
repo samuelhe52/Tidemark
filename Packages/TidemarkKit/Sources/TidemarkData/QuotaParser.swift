@@ -72,6 +72,43 @@ enum QuotaParser {
         return CodexUsage(email: root["email"] as? String, plan: root["plan_type"] as? String, windows: windows)
     }
 
+    /// The JSON stdout of `agy -p /usage --output-format json`; nil when it is not a usage answer.
+    static func agyUsage(_ data: Data, observedAt: Date) -> [QuotaWindow]? {
+        guard let root = object(data), root["status"] as? String == "SUCCESS",
+            let command = root["command"] as? [String: Any], command["name"] as? String == "usage",
+            let groups = (command["data"] as? [String: Any])?["groups"] as? [[String: Any]]
+        else { return nil }
+        var byID: [String: QuotaWindow] = [:]
+        for groupObject in groups {
+            for bucket in groupObject["buckets"] as? [[String: Any]] ?? [] {
+                guard let rawID = bucket["id"] as? String, let dash = rawID.lastIndex(of: "-") else { continue }
+                let group = String(rawID[..<dash])
+                guard QuotaWindow.agyGroups.contains(group) else { continue }
+                let base: String
+                switch bucket["window"] as? String {
+                case "5h": base = QuotaWindow.fiveHourID
+                case "weekly": base = QuotaWindow.sevenDayID
+                default: continue
+                }
+                let id = QuotaWindow.agyID(base, group: group)
+                guard byID[id] == nil else { continue }
+                let used = number(bucket["remaining_fraction"]).flatMap { (0...1).contains($0) ? (1 - $0) * 100 : nil }
+                byID[id] = QuotaWindow(
+                    id: id, usedPercent: used, resetsAt: reset(bucket["reset_time"]),
+                    duration: QuotaWindow.namedDurations[base], observedAt: observedAt, source: .live)
+            }
+        }
+        let orderedIDs = QuotaWindow.agyGroups.flatMap { group in
+            [QuotaWindow.fiveHourID, QuotaWindow.sevenDayID].map { QuotaWindow.agyID($0, group: group) }
+        }
+        return orderedIDs.compactMap { byID[$0] }
+    }
+
+    /// True when `agy -p /usage --output-format json` returned a structured error payload.
+    static func isAgyErrorResponse(_ data: Data) -> Bool {
+        object(data)?["status"] as? String == "ERROR"
+    }
+
     /// The `exp` claim of a JWT access token. The signature is not checked; this only avoids
     /// sending a token that has certainly expired.
     static func tokenExpiry(_ token: String) -> Date? {

@@ -14,6 +14,7 @@ enum QuotaText {
         switch service {
         case .claude: String(localized: "Claude Code")
         case .codex: String(localized: "Codex")
+        case .gemini: String(localized: "Gemini")
         }
     }
 
@@ -21,11 +22,17 @@ enum QuotaText {
         switch service {
         case .claude: String(localized: "Claude")
         case .codex: String(localized: "Codex")
+        case .gemini: String(localized: "Gemini")
         }
     }
 
     static func windowName(_ window: QuotaWindow) -> String {
         if let model = window.weeklyModel { return String(localized: "Weekly · \(model.capitalized)") }
+        if let group = window.agyGroup {
+            let length = window.isWeekly ? String(localized: "Weekly") : String(localized: "5-hour")
+            let name = group == "gemini" ? String(localized: "Gemini") : String(localized: "3P")
+            return "\(length) · \(name)"
+        }
         return switch window.id {
         case QuotaWindow.fiveHourID: String(localized: "5-hour")
         case QuotaWindow.sevenDayID: String(localized: "Weekly")
@@ -67,19 +74,32 @@ enum QuotaText {
         case .unrecognized: String(localized: "No quota in the local file")
         case .signedOut: String(localized: "Not signed in")
         case .credentialExpired:
-            service == .claude
-                ? String(localized: "Sign-in expired. Open Claude Code to renew it.")
-                : String(localized: "Sign-in expired. Sign in again in CC Switch or Codex.")
+            switch service {
+            case .claude: String(localized: "Sign-in expired. Open Claude Code to renew it.")
+            case .codex: String(localized: "Sign-in expired. Sign in again in CC Switch or Codex.")
+            case .gemini: String(localized: "Sign-in expired. Open Antigravity CLI to renew it.")
+            }
         case .credentialChanged: String(localized: "Sign-in changed or is being renewed. Tidemark will retry.")
         case .credentialSaveFailed: String(localized: "Couldn't save the renewed sign-in. Check CC Switch.")
         case .accessDenied: String(localized: "Access was denied")
         case .rateLimited: String(localized: "Rate limited. Tidemark will retry later.")
-        case .cliUnavailable: String(localized: "Claude Code wasn't found. Install it to see live usage.")
-        case .cliFailed: String(localized: "Claude Code exited with an error. Check that it runs in Terminal.")
+        case .cliUnavailable:
+            switch service {
+            case .claude: String(localized: "Claude Code wasn't found. Install it to see live usage.")
+            case .gemini: String(localized: "Antigravity CLI wasn't found. Install agy to see live usage.")
+            case .codex: String(localized: "The required CLI wasn't found.")
+            }
+        case .cliFailed:
+            switch service {
+            case .claude: String(localized: "Claude Code exited with an error. Check that it runs in Terminal.")
+            case .gemini: String(localized: "agy exited with an error. Check that it runs in Terminal.")
+            case .codex: String(localized: "The CLI exited with an error. Check that it runs in Terminal.")
+            }
         case .requestFailed:
-            service == .claude
-                ? String(localized: "Couldn't refresh usage. Check the network or proxy.")
-                : String(localized: "Couldn't reach the usage service")
+            switch service {
+            case .claude, .gemini: String(localized: "Couldn't refresh usage. Check the network or proxy.")
+            case .codex: String(localized: "Couldn't reach the usage service")
+            }
         case .proxyUnavailable:
             String(localized: "Couldn't use the configured proxy. Check its address and proxy type.")
         case .notObserved: String(localized: "Not seen in use yet")

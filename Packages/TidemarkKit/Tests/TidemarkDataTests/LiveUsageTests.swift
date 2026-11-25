@@ -217,6 +217,87 @@ struct LiveUsageTests {
         #expect(!gate.allows("a", now: start + 1799, userInitiated: true))
         #expect(gate.allows("a", now: start + 1800, userInitiated: false))
     }
+
+    @Test func geminiIsAbsentWithoutAgyOrStoredReading() async throws {
+        let fixture = try Fixture()
+        let services = await fixture.service(live: true, now: now).refresh(userInitiated: true)
+        #expect(!services.contains { $0.service == .gemini })
+        #expect(fixture.agyUsage.runs == 0)
+    }
+
+    @Test func geminiLiveOffNeverRunsAgyAndShowsStoredReading() async throws {
+        let fixture = try Fixture()
+        fixture.agyUsage.isInstalled = true
+        let initial = await fixture.service(live: false, now: now).refresh(userInitiated: true)
+        let empty = try #require(initial.first { $0.service == .gemini }?.accounts.first)
+        #expect(empty.id == "gemini:local" && empty.windows.isEmpty && empty.issue == .notObserved)
+        #expect(fixture.agyUsage.runs == 0)
+
+        let stored =
+            #"{"gemini:local":{"windows":[{"id":"five_hour_gemini","usedPercent":11,"duration":18000,"observedAt":1793699900,"source":"live"}]}}"#
+        try fixture.write(stored, to: "Library/Application Support/Tidemark/usage-snapshots.json")
+        fixture.agyUsage.isInstalled = false
+        let restored = await fixture.service(live: false, now: now).refresh(userInitiated: false)
+        let account = try #require(restored.first { $0.service == .gemini }?.accounts.first)
+        #expect(account.windows.first?.id == "five_hour_gemini" && account.issue == nil)
+        #expect(fixture.agyUsage.runs == 0)
+    }
+
+    @Test func geminiLiveRunsAgyPersistsWindowsAndHonorsGate() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        fixture.agyUsage.isInstalled = true
+        fixture.agyUsage.respond = { .finished(Data(Fixture.agyUsagePayload.utf8)) }
+        let service = fixture.service(live: true, clock: clock)
+        let services = await service.refresh(userInitiated: false)
+        let gemini = try #require(services.first { $0.service == .gemini }?.accounts.first)
+        #expect(gemini.id == "gemini:local" && gemini.issue == nil)
+        #expect(gemini.windows.map(\.id) == ["five_hour_gemini", "seven_day_gemini", "five_hour_3p", "seven_day_3p"])
+        #expect(fixture.agyUsage.runs == 1)
+
+        clock.now = now + 60
+        _ = await service.refresh(userInitiated: false)
+        #expect(fixture.agyUsage.runs == 1)
+
+        let saved = try String(
+            contentsOf: fixture.home.appending(path: "Library/Application Support/Tidemark/usage-snapshots.json"),
+            encoding: .utf8)
+        #expect(saved.contains("gemini:local") && saved.contains("five_hour_gemini"))
+    }
+
+    @Test func geminiErrorsMapToIssuesAndBackOff() async throws {
+        let fixture = try Fixture()
+        let clock = Clock(now)
+        fixture.agyUsage.isInstalled = true
+        fixture.agyUsage.respond = { .failed(exitCode: 1, output: Data(#"{"status":"ERROR","error":"net"}"#.utf8)) }
+        let service = fixture.service(live: true, clock: clock)
+        let network = try #require(
+            await service.refresh(userInitiated: true).first { $0.service == .gemini }?.accounts.first)
+        #expect(network.issue == .requestFailed)
+
+        // Backed off: an immediate user refresh does not run agy again.
+        clock.now = now + 30
+        _ = await service.refresh(userInitiated: true)
+        #expect(fixture.agyUsage.runs == 1)
+
+        clock.now = now + 120
+        fixture.agyUsage.respond = { .failed(exitCode: 2, output: Data("crash".utf8)) }
+        let cliError = try #require(
+            await service.refresh(userInitiated: true).first { $0.service == .gemini }?.accounts.first)
+        #expect(cliError.issue == .cliFailed)
+
+        clock.now = now + 600
+        fixture.agyUsage.respond = { .unavailable }
+        let missing = try #require(
+            await service.refresh(userInitiated: true).first { $0.service == .gemini }?.accounts.first)
+        #expect(missing.issue == .cliUnavailable)
+
+        clock.now = now + 2000
+        fixture.agyUsage.respond = { .proxyUnavailable }
+        let proxy = try #require(
+            await service.refresh(userInitiated: true).first { $0.service == .gemini }?.accounts.first)
+        #expect(proxy.issue == .proxyUnavailable)
+    }
 }
 
 /// A temporary home directory with fake credentials and network.
@@ -225,6 +306,7 @@ final class Fixture: @unchecked Sendable {
     let credentials = FakeCredentials()
     let transport = FakeTransport()
     let claudeUsage = FakeClaudeUsage()
+    let agyUsage = FakeAgyUsage()
 
     init() throws {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -248,9 +330,14 @@ final class Fixture: @unchecked Sendable {
         let environment = UsageEnvironment(
             home: home, codexHome: home.appending(path: ".codex"), ccSwitchHome: home.appending(path: ".cc-switch"),
             supportDirectory: home.appending(path: "Library/Application Support/Tidemark"),
-            credentials: credentials, transport: transport, claudeUsage: claudeUsage, now: { clock?.now ?? Date() })
+            credentials: credentials, transport: transport, claudeUsage: claudeUsage, agyUsage: agyUsage,
+            now: { clock?.now ?? Date() })
         return UsageService(environment: environment, liveEnabled: live, jitter: { 1 })
     }
+
+    static let agyUsagePayload = #"""
+        {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.97,"reset_time":"2026-12-02T18:09:19Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.89,"reset_time":"2026-11-25T23:09:19Z"}]},{"buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":1,"reset_time":"2026-12-02T18:39:32Z"},{"id":"3p-5h","window":"5h","remaining_fraction":1,"reset_time":"2026-11-25T23:39:32Z"}]}]}}}
+        """#
 
     /// `~/.claude.json` signed in as `account`, with a usage cache Claude Code fetched at `fetchedAt`.
     static func claudeState(account: String, fetchedAt: Date, used: Double, plan: String = "claude_pro") -> String {
@@ -346,6 +433,31 @@ final class FakeClaudeUsage: ClaudeUsageCommand, @unchecked Sendable {
     }
 
     func run() async -> ClaudeUsageRun {
+        let handler = lock.withLock {
+            count += 1
+            return self.handler
+        }
+        return handler()
+    }
+}
+
+final class FakeAgyUsage: AgyUsageCommand, @unchecked Sendable {
+    private let lock = NSLock()
+    private var installed = false
+    private var handler: @Sendable () -> AgyUsageRun = { .unavailable }
+    private var count = 0
+
+    var isInstalled: Bool {
+        get { lock.withLock { installed } }
+        set { lock.withLock { installed = newValue } }
+    }
+    var runs: Int { lock.withLock { count } }
+    var respond: @Sendable () -> AgyUsageRun {
+        get { lock.withLock { handler } }
+        set { lock.withLock { handler = newValue } }
+    }
+
+    func run() async -> AgyUsageRun {
         let handler = lock.withLock {
             count += 1
             return self.handler

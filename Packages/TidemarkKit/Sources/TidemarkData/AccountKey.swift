@@ -26,4 +26,7 @@ enum AccountKey {
     static func managedCodex(_ localID: String) -> String {
         "codex:managed:\(localID)"
     }
+
+    /// `gemini:local`: `agy -p /usage` names no account.
+    static let gemini = "gemini:local"
 }

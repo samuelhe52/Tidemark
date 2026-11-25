@@ -233,6 +233,50 @@ struct UsageProxyTests {
         #expect(await ClaudeCLIUsageCommand(home: directory, proxy: proxy).run() == .failed(exitCode: 17))
     }
 
+    @Test func agyProxyAcceptsSOCKSAndTargetsGoogleHost() async throws {
+        let socks = URL(string: "socks5://127.0.0.1:1080")!
+        var proxy = UsageProxy(
+            variables: { ["ALL_PROXY": socks.absoluteString, "NO_PROXY": "local.test"] },
+            systemRoute: { _, _ in .direct })
+        var env = try await proxy.agyEnvironment(["HTTPS_PROXY": "http://inherited:1"])
+        #expect(env["HTTPS_PROXY"] == socks.absoluteString)
+        #expect(env["http_proxy"] == socks.absoluteString)
+        #expect(env["ALL_PROXY"] == nil)
+        #expect(env["NO_PROXY"] == "local.test")
+
+        let overrideProxy = UsageProxy(
+            variables: { [:] }, systemRoute: { _, _ in .direct }, override: { socks.absoluteString })
+        env = try await overrideProxy.agyEnvironment([:])
+        #expect(env["HTTPS_PROXY"] == socks.absoluteString && env["NO_PROXY"] == "")
+
+        proxy = UsageProxy(
+            variables: { [:] },
+            systemRoute: { url, _ in
+                #expect(url.host == "daily-cloudcode-pa.googleapis.com")
+                return .proxy(socks)
+            },
+            systemExceptions: { ["localhost"] })
+        env = try await proxy.agyEnvironment([:])
+        #expect(env["HTTPS_PROXY"] == socks.absoluteString && env["NO_PROXY"] == "localhost")
+
+        proxy.systemRoute = { _, _ in .automatic }
+        await #expect(throws: UsageProxyError.self) { try await proxy.agyEnvironment([:]) }
+    }
+
+    @Test func agyCommandCapturesStdoutAndPreservesErrorExit() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bin = directory.appending(path: ".local/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let proxy = UsageProxy(variables: { [:] }, systemRoute: { _, _ in .direct })
+        let command = AgyCLIUsageCommand(home: directory, proxy: proxy)
+        let ok = try executable(in: bin, name: "agy", "#!/bin/sh\nprintf '%s' '{\"status\":\"SUCCESS\"}'\n")
+        #expect(command.isInstalled)
+        #expect(await command.run() == .finished(Data(#"{"status":"SUCCESS"}"#.utf8)))
+        try Data("#!/bin/sh\nprintf '%s' '{\"status\":\"ERROR\"}'\nexit 1\n".utf8).write(to: ok)
+        #expect(await command.run() == .failed(exitCode: 1, output: Data(#"{"status":"ERROR"}"#.utf8)))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "tidemark-proxy-test-\(UUID())")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

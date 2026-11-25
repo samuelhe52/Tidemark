@@ -70,10 +70,12 @@ public actor UsageService {
         if userInitiated { codexKeychainRefused = false }
         if store == nil { store = SnapshotStore(url: environment.snapshotFile).load() }
         let before = store
-        let claude = await claudeUsage(userInitiated: userInitiated)
-        let codex = await codexUsage(userInitiated: userInitiated)
+        async let claude = claudeUsage(userInitiated: userInitiated)
+        async let codex = codexUsage(userInitiated: userInitiated)
+        async let gemini = geminiUsage(userInitiated: userInitiated)
+        let services = [await claude, await codex] + [await gemini].compactMap { $0 }
         if let store, store != before { SnapshotStore(url: environment.snapshotFile).save(store) }
-        return [claude, codex]
+        return services
     }
 
     // MARK: - Claude
@@ -176,6 +178,22 @@ public actor UsageService {
         accounts.removeAll { !$0.isActive && !remaining.contains($0.id) }
         let others = accounts.dropFirst().sorted { ($0.email ?? $0.id) < ($1.email ?? $1.id) }
         return ServiceUsage(service: .codex, accounts: [accounts[0]] + others)
+    }
+
+    // MARK: - Gemini
+
+    /// Nil when `agy` is not installed and no reading is stored, so users without Antigravity
+    /// see no empty section.
+    private func geminiUsage(userInitiated: Bool) async -> ServiceUsage? {
+        let id = AccountKey.gemini
+        let installed = environment.agyUsage.isInstalled
+        guard installed || store?[id] != nil else { return nil }
+        let reading = await liveGemini(accountID: id, userInitiated: userInitiated)
+        let account = resolve(
+            id: id, service: .gemini, email: nil, isActive: true,
+            candidates: reading.candidates, liveIssue: reading.issue,
+            passiveIssue: installed ? .notObserved : .cliUnavailable)
+        return ServiceUsage(service: .gemini, accounts: [account])
     }
 
     // MARK: - Choosing an observation
@@ -299,6 +317,37 @@ public actor UsageService {
         let age = now.timeIntervalSince(fetched)
         guard age >= 0, age < Self.claudeCacheFreshness else { return nil }
         return Observation(windows: cache.windows, plan: file.identity.plan)
+    }
+
+    /// Live Gemini plan usage through the Antigravity CLI (`agy`).
+    private func liveGemini(accountID: String, userInitiated: Bool) async -> LiveReading {
+        guard liveEnabled else { return LiveReading(nil) }
+        let now = environment.now()
+        guard gate.allows(accountID, now: now, userInitiated: userInitiated) else {
+            return LiveReading(lastLive[accountID])
+        }
+        let run = await environment.agyUsage.run()
+        // Live usage was turned off during the run.
+        guard liveEnabled else { return LiveReading(nil) }
+        let outcome: LiveOutcome
+        switch run {
+        case .unavailable: outcome = fail(.cliUnavailable, key: accountID, now: now).0
+        case .timedOut: outcome = fail(.requestFailed, key: accountID, now: environment.now()).0
+        case .proxyUnavailable: outcome = fail(.proxyUnavailable, key: accountID, now: environment.now()).0
+        case .failed(_, let output):
+            let answered = output.map(QuotaParser.isAgyErrorResponse) ?? false
+            outcome = fail(answered ? .requestFailed : .cliFailed, key: accountID, now: environment.now()).0
+        case .finished(let output):
+            let finished = environment.now()
+            if let windows = output.flatMap({ QuotaParser.agyUsage($0, observedAt: finished) }), !windows.isEmpty {
+                gate.recordSuccess(accountID, now: finished)
+                outcome = .observed(Observation(windows: windows))
+            } else {
+                outcome = fail(.requestFailed, key: accountID, now: finished).0
+            }
+        }
+        lastLive[accountID] = outcome
+        return LiveReading(outcome)
     }
 
     /// Sends one Codex live request when live usage is on and the account's gate allows;

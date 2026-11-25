@@ -359,19 +359,31 @@ final class DashboardView: NSView {
                     return label
                 }
             }
-            for start in stride(from: 0, to: account.windows.count, by: 2) {
-                let windows = account.windows[start..<min(start + 2, account.windows.count)]
-                let presentations = windows.map { windowPresentation($0, now: now) }
+            if account.service == .gemini, !account.windows.isEmpty {
+                let presentations = account.windows.map { windowPresentation($0, now: now) }
+                let rowID = RowID.windows(account.id, account.windows.map(\.id))
+                let previousX = (previous[rowID]?.view as? NSScrollView)?.contentView.bounds.origin.x ?? 0
                 append(
-                    .windows(account.id, windows.map(\.id)), state: presentations,
+                    rowID, state: presentations,
                     motionState: presentations.map(\.motion), previous: previous
                 ) {
-                    let row = NSStackView(views: presentations.map(windowTile))
-                    row.distribution = .fillEqually
-                    row.alignment = .top
-                    row.spacing = 8
-                    if windows.count == 1 { row.addArrangedSubview(NSView()) }
-                    return row
+                    horizontalWindowRow(presentations, scrollOffsetX: previousX)
+                }
+            } else {
+                for start in stride(from: 0, to: account.windows.count, by: 2) {
+                    let windows = account.windows[start..<min(start + 2, account.windows.count)]
+                    let presentations = windows.map { windowPresentation($0, now: now) }
+                    append(
+                        .windows(account.id, windows.map(\.id)), state: presentations,
+                        motionState: presentations.map(\.motion), previous: previous
+                    ) {
+                        let row = NSStackView(views: presentations.map { windowTile($0) })
+                        row.distribution = .fillEqually
+                        row.alignment = .top
+                        row.spacing = 8
+                        if windows.count == 1 { row.addArrangedSubview(NSView()) }
+                        return row
+                    }
                 }
             }
             if account.windows.isEmpty, account.issue == nil {
@@ -531,7 +543,43 @@ final class DashboardView: NSView {
             description: description)
     }
 
-    private func windowTile(_ presentation: WindowPresentation) -> NSView {
+    private func horizontalWindowRow(_ presentations: [WindowPresentation], scrollOffsetX: CGFloat) -> NSView {
+        let viewportWidth = Self.width - Self.padding * 2
+        let tileSpacing: CGFloat = 8
+        let standardTileWidth = (viewportWidth - tileSpacing) / 2
+        let tiles = presentations.map { presentation -> NSView in
+            let tile = windowTile(presentation, scrollable: true)
+            tile.widthAnchor.constraint(greaterThanOrEqualToConstant: standardTileWidth).isActive = true
+            tile.widthAnchor.constraint(lessThanOrEqualToConstant: 184).isActive = true
+            return tile
+        }
+        let strip = NSStackView(views: tiles)
+        strip.orientation = .horizontal
+        strip.alignment = .top
+        strip.spacing = tileSpacing
+        strip.layoutSubtreeIfNeeded()
+        let size = strip.fittingSize
+        strip.frame = NSRect(origin: .zero, size: CGSize(width: ceil(size.width), height: ceil(size.height)))
+
+        let scroll = HorizontalScrollView()
+        scroll.verticalParent = scrollView
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false
+        scroll.hasVerticalScroller = false
+        scroll.verticalScrollElasticity = .none
+        scroll.horizontalScrollElasticity = .allowed
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.documentView = strip
+        scroll.heightAnchor.constraint(equalToConstant: ceil(size.height)).isActive = true
+        let maxX = max(0, ceil(size.width) - viewportWidth)
+        if scrollOffsetX > 0, maxX > 0 {
+            scroll.contentView.scroll(to: NSPoint(x: min(scrollOffsetX, maxX), y: 0))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        return scroll
+    }
+
+    private func windowTile(_ presentation: WindowPresentation, scrollable: Bool = false) -> NSView {
         let name = Self.label(presentation.name, size: 11, weight: .medium)
         let ring = QuotaRingView(remaining: presentation.remaining, style: presentation.percentageStyle)
         let text = Self.column(spacing: 3)
@@ -539,6 +587,10 @@ final class DashboardView: NSView {
         let caption = CompanionLabel(wrappingLabelWithString: presentation.status)
         caption.font = .systemFont(ofSize: 10)
         caption.textColor = .secondaryLabelColor
+        if scrollable {
+            name.setContentCompressionResistancePriority(.required, for: .horizontal)
+            caption.preferredMaxLayoutWidth = 132
+        }
         text.addArrangedSubview(caption)
         for label in [name, caption] {
             label.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
