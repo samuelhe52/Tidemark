@@ -241,6 +241,20 @@ struct LiveUsageTests {
         #expect(fixture.agyUsage.runs == 1)
     }
 
+    @Test func onlyTurningLiveOnRetriesAMissedAgyLookup() async throws {
+        let fixture = try Fixture()
+        let service = fixture.service(live: true, now: now)
+        _ = await service.refresh(userInitiated: true)
+        _ = await service.refresh(userInitiated: true)
+        #expect(fixture.agyUsage.retries == [false, false])
+
+        await service.setLiveEnabled(false)
+        await service.setLiveEnabled(true)
+        _ = await service.refresh(userInitiated: false)
+        _ = await service.refresh(userInitiated: true)
+        #expect(fixture.agyUsage.retries == [false, false, true, false])
+    }
+
     @Test func geminiLiveOffNeverRunsAgyAndShowsStoredReading() async throws {
         let fixture = try Fixture()
         fixture.agyUsage.isInstalled = true
@@ -461,6 +475,7 @@ final class FakeAgyUsage: AgyUsageCommand, @unchecked Sendable {
     private let lock = NSLock()
     private var installed = false
     private var foundByShell = false
+    private var retryRequests: [Bool] = []
     private var handler: @Sendable () -> AgyUsageRun = { .unavailable }
     private var count = 0
 
@@ -478,8 +493,14 @@ final class FakeAgyUsage: AgyUsageCommand, @unchecked Sendable {
         set { lock.withLock { handler = newValue } }
     }
 
+    /// `retryMiss` of each lookup, in order.
+    var retries: [Bool] { lock.withLock { retryRequests } }
+
     func isInstalled(allowShellLookup: Bool, retryMiss: Bool) async -> Bool {
-        lock.withLock { installed || (allowShellLookup && foundByShell) }
+        lock.withLock {
+            retryRequests.append(retryMiss)
+            return installed || (allowShellLookup && foundByShell)
+        }
     }
 
     func run() async -> AgyUsageRun {

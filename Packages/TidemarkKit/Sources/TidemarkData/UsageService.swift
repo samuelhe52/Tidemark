@@ -24,6 +24,8 @@ public actor UsageService {
     private var lastLive: [String: LiveOutcome] = [:]
     /// The native Codex Keychain read was refused; retried only when the user asks.
     private var codexKeychainRefused = false
+    /// Live Usage was turned on since the last `agy` lookup, so a cached miss is checked again.
+    private var retryAgyLookup = false
     /// Codex's configured credential store, read once per refresh pass.
     private var codexStore = CodexCredentialStore.file
     private var lastCodexAccountID: String?
@@ -48,6 +50,7 @@ public actor UsageService {
     }
 
     public func setLiveEnabled(_ enabled: Bool) async {
+        if enabled, !liveEnabled { retryAgyLookup = true }
         liveEnabled = enabled
         if !enabled {
             rejectedNativeTokens.removeAll()
@@ -186,7 +189,11 @@ public actor UsageService {
     /// see no empty section.
     private func geminiUsage(userInitiated: Bool) async -> ServiceUsage? {
         let id = AccountKey.gemini
-        let installed = await environment.agyUsage.isInstalled(allowShellLookup: liveEnabled, retryMiss: userInitiated)
+        // Only turning Live Usage on retries a miss: a manual refresh must not wait for a login
+        // shell each time, since every service's reading waits with it.
+        let retryMiss = liveEnabled && retryAgyLookup
+        if retryMiss { retryAgyLookup = false }
+        let installed = await environment.agyUsage.isInstalled(allowShellLookup: liveEnabled, retryMiss: retryMiss)
         guard installed || store?[id] != nil else { return nil }
         let reading = await liveGemini(accountID: id, userInitiated: userInitiated)
         let account = resolve(
