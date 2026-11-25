@@ -195,6 +195,7 @@ credentials. Live sources are an opt-in setting.
 | Claude | Passive | The statusline tap (3.2) |
 | Codex | Passive | Newest `token_count.rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (3.3) |
 | Claude | Live, opt-in | Run `claude -p /usage` with CC Switch's isolation flags, then reread `~/.claude.json`; the cache counts only when its `accountUuid` is the signed-in account and it is under 60 s old. A cache that young is used without a run, since Claude Code would not rewrite it. Tidemark reads no Claude credential. See [008](../008-claude-usage-via-cli/000-plan.md). |
+| Gemini | Live, opt-in | Run `agy -p /usage --output-format json --log-file /dev/null --print-timeout 40s` and parse `command.data.groups[].buckets[]` from bounded stdout (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`). Shown only when `agy` is installed or a reading is stored; no passive source. Tidemark reads no Google or Antigravity credential. See [010](../010-gemini-plan-quota/000-plan.md). |
 | Codex | Live, opt-in | The store `cli_auth_credentials_store` in `$CODEX_HOME/config.toml` names: `auth.json` (default `file`), Keychain item `Codex Auth`, account `cli\|<first 16 hex of SHA-256(codex home)>` (`keyring`), or both (`auto`); `https://chatgpt.com/backend-api/wham/usage` with `ChatGPT-Account-Id` (the upstream workspace ID) and `User-Agent: codex-cli` |
 | Codex managed accounts | Live, opt-in | CC Switch's `~/.cc-switch/codex_oauth_auth.json` v2; reuse each account's refresh token to obtain an access token and query `wham/usage`, independently of the active provider. See [003](../003-direct-multi-account-quota/000-plan.md). |
 
@@ -229,9 +230,12 @@ macOS proxy settings. CC Switch's configuration is not read for routing. Codex q
 and managed OAuth renewal share a URLSession transport with proxy failover disabled.
 Explicit bypasses go direct. A malformed proxy reports a proxy issue rather than
 going direct. Claude Code receives HTTP(S) proxy variables. It skips a SOCKS variable
-for the next source. A SOCKS-only or PAC system route reports a proxy issue. See
-[008.004](../008-claude-usage-via-cli/004-proxy-routing.md) and
-[008.005](../008-claude-usage-via-cli/005-proxy-setting.md).
+for the next source. A SOCKS-only or PAC system route reports a proxy issue. `agy`
+receives HTTP(S) and SOCKS proxy variables targeted at `daily-cloudcode-pa.googleapis.com`;
+a PAC system route reports a proxy issue. See
+[008.004](../008-claude-usage-via-cli/004-proxy-routing.md),
+[008.005](../008-claude-usage-via-cli/005-proxy-setting.md), and
+[010](../010-gemini-plan-quota/000-plan.md).
 
 ### 3.2 The Claude statusline tap
 
@@ -288,6 +292,9 @@ five-hour limit. Every window is optional.
   with a matching stored email and no contradictory active identity.
   Windows are named by length:
   `limit_window_seconds` maps to `five_hour`, `seven_day`, or `30_day`.
+- Gemini uses a single local account key `gemini:local` (since `agy -p /usage` names
+  no account), with group-scoped windows `five_hour_gemini`, `seven_day_gemini`,
+  `five_hour_3p`, and `seven_day_3p`, rendered in one horizontally scrolling row.
 
 ### 3.5 Freshness
 
@@ -435,8 +442,8 @@ struct QuotaWindow: Codable {
 ## 6. Out of scope
 
 - Tidemark never writes CC Switch's database or switches providers, and never
-  writes `~/.codex/auth.json`, `~/.claude`, or Keychain items. With Live Usage on,
-  the Claude Code it runs may renew its own token and rewrite its own files.
+  writes `~/.codex/auth.json`, `~/.claude`, `~/.gemini`, or Keychain items. With Live Usage on,
+  the Claude Code or `agy` CLI it runs may renew its own token and rewrite its own files.
 - No agent activity tracking in the first version; the orb does not show "working".
 - No orb mood (quota pressure shown through motion and color), and no pace
   heuristic. Deferred by the maintainer.
