@@ -43,14 +43,15 @@ enum QuotaText {
         }
     }
 
-    /// "5h", "7d", or a scoped label like "7d Gemini", "7d 3P", "7d Sonnet", for the one-line summary.
+    /// "5h", "7d", or a scoped label like "7d 3P" or "7d Sonnet", for the one-line summary. The Gemini
+    /// group gets no scope: the summary already names the service "Gemini" in front of it.
     static func shortWindowName(_ window: QuotaWindow) -> String {
         let length = window.duration.map(duration) ?? ""
         let scope: String? =
             if let model = window.weeklyModel {
                 model.capitalized
             } else if let group = window.agyGroup {
-                group == "gemini" ? String(localized: "Gemini") : String(localized: "3P")
+                group == "gemini" ? nil : String(localized: "3P")
             } else {
                 nil
             }
